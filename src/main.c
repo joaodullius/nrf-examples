@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Intel Corporation
+ * Copyright (c) 2021 Joao Dulliuswest 
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -131,8 +131,7 @@ static void dppi_init(void)
 
 void main(void)
 {
-    printk("Starting Blinky + Timer Application...\n");
-
+    printk("Starting Fancy Blinker Application...\n");
 	timer_init();
 
 #if defined(LED_GPIOTE)
