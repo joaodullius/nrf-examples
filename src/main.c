@@ -159,7 +159,7 @@ static void start_advertising_coded(struct k_work *item)
 
 	err = bt_le_ext_adv_start(adv_coded, NULL);
 	if (err) {
-		printk("Failed to start advertising set (%d)\n", err);
+		printk("Failed to start coded advertising set (%d)\n", err);
 		return;
 	}
 
@@ -172,7 +172,7 @@ static void start_advertising_regular(struct k_work *item)
 
 	err = bt_le_ext_adv_start(adv_regular, NULL);
 	if (err) {
-		printk("Failed to start advertising set (%d)\n", err);
+		printk("Failed to start regular advertising set (%d)\n", err);
 		return;
 	}
 
@@ -185,25 +185,23 @@ static void bt_ready(void)
 
 	printk("Bluetooth initialized\n");
 
-	k_work_init(&start_regular_advertising_worker, start_advertising_regular);
 	k_work_init(&start_coded_advertising_worker, start_advertising_coded);
-	
-
-
-	err = create_advertising_regular();
-	if (err) {
-		printk("Advertising failed to create (err %d)\n", err);
-		return;
-	}
+	k_work_init(&start_regular_advertising_worker, start_advertising_regular);
 
 	err = create_advertising_coded();
 	if (err) {
 		printk("Advertising Coded failed to create (err %d)\n", err);
 		return;
 	}
+	
+	err = create_advertising_regular();
+	if (err) {
+		printk("Advertising failed to create (err %d)\n", err);
+		return;
+	}
 
-	k_work_submit(&start_regular_advertising_worker);
 	k_work_submit(&start_coded_advertising_worker);
+	k_work_submit(&start_regular_advertising_worker);
 }
 
 static void bas_notify(void)
