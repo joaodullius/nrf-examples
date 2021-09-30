@@ -1,41 +1,38 @@
 /*
- * Copyright (c) 2021 Joao Dulliuswest 
+ * Copyright (c) 2021 Joao Dullius
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <zephyr.h>
-#include <device.h>
+
 #include <devicetree.h>
-#include <drivers/gpio.h>
-#include <timing/timing.h>
 
 #include <nrfx_timer.h>
 #include <nrfx_dppi.h>
-#include <nrfx_gpiote.h>
 #include <helpers/nrfx_gppi.h>
-
-/* The devicetree node identifier for the "led0" alias. */
-#define LED0_NODE DT_ALIAS(led0)
-#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
-#define PIN_LED0	DT_GPIO_PIN(LED0_NODE, gpios)
-#define FLAGS_LED0	DT_GPIO_FLAGS(LED0_NODE, gpios)
-
-#define LED_GPIOTE true
-
-#if !defined(LED_GPIOTE)
-	static bool led0_is_on = true;
-	static const struct device *dev_led0;
-#endif
+#include <nrfx_spim.h>
 
 static const nrfx_timer_t m_sample_timer = NRFX_TIMER_INSTANCE(1);
 
+#define BUF_SIZE 10
+uint8_t buffer_tx[BUF_SIZE] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+uint8_t buffer_rx[BUF_SIZE] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+nrfx_spim_xfer_desc_t transfer = {
+	.p_tx_buffer = buffer_tx, ///< Pointer to TX buffer.
+	.tx_length = BUF_SIZE, ///< TX buffer length.
+	.p_rx_buffer = buffer_rx, ///< Pointer to RX buffer.
+	.rx_length = BUF_SIZE ///< RX buffer length.
+};
+
+nrfx_spim_t spi_instance = NRFX_SPIM_INSTANCE(2);
+nrfx_spim_config_t spi_config =
+	NRFX_SPIM_DEFAULT_CONFIG(28, 29, 30, NRFX_SPIM_PIN_NOT_USED);
+
 void timer_handler(nrf_timer_event_t event_type, void* p_context)
 {
-#if !defined(LED_GPIOTE)
-    gpio_pin_set(dev_led0, PIN_LED0, (int)led0_is_on);
-	led0_is_on = !led0_is_on;
-#endif
+
 }
 
 static void timer_init(void)
@@ -49,7 +46,7 @@ static void timer_init(void)
     }
     nrfx_timer_extended_compare(&m_sample_timer,
                                 NRF_TIMER_CC_CHANNEL0,
-                                nrfx_timer_ms_to_ticks(&m_sample_timer, 500),
+                                nrfx_timer_ms_to_ticks(&m_sample_timer, 1000),
                                 NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK,
                                 true);
     
@@ -61,43 +58,23 @@ static void timer_init(void)
          nrfx_timer_1_irq_handler, NULL, 0);
 }
 
-#if !defined(LED_GPIOTE)
-static void gpio_init(void)
+static void spim_handler(nrfx_spim_evt_t const *p_event, void *p_context)
 {
-	dev_led0 = device_get_binding(LED0);
-	if (dev_led0 == NULL) {
-		return;
-	}
-
-	int ret = gpio_pin_configure(dev_led0, PIN_LED0, GPIO_OUTPUT_ACTIVE | FLAGS_LED0);
-	if (ret < 0) {
-		return;
+	if (p_event->type == NRFX_SPIM_EVENT_DONE) {
+		printk("SPI transfer finished");
 	}
 }
-#endif
 
-#if defined(LED_GPIOTE)
-static void gpiote_init(void)
+static void spi_init(void)
 {
-	nrfx_gpiote_out_config_t led_pin_cfg = {0};
+	nrfx_err_t err_code;
+	
+	err_code = nrfx_spim_init(&spi_instance, &spi_config, spim_handler, NULL);
 
-	led_pin_cfg.action = NRF_GPIOTE_POLARITY_TOGGLE;
-	led_pin_cfg.init_state = NRF_GPIOTE_INITIAL_VALUE_HIGH;
-	led_pin_cfg.task_pin = true;
-
-	nrfx_err_t err = nrfx_gpiote_init(NRFX_GPIOTE_DEFAULT_CONFIG_IRQ_PRIORITY);
-	if (err != NRFX_SUCCESS) {
-		printk("gpiote1 err: %x", err);
+	if (err_code != NRFX_SUCCESS) {
+		printk("nrfx_spim_init error: %08x", err_code);
 		return;
 	}
-
-	err = nrfx_gpiote_out_init(PIN_LED0, &led_pin_cfg);
-	if (err != NRFX_SUCCESS) {
-		printk("gpiote1 err: %x", err);
-		return;
-	}
-
-	nrfx_gpiote_out_task_enable(PIN_LED0);
 }
 
 static void dppi_init(void)
@@ -115,34 +92,24 @@ static void dppi_init(void)
 		return;
 	}
 
-	/* Tie it all together */
-	//nrf_timer_publish_set(m_sample_timer.p_reg, NRF_TIMER_EVENT_COMPARE0, dppi_ch_1);
-	//nrf_gpiote_subscribe_set(led_pin.p_reg, NRF_GPIOTE_TASK_OUT_0, dppi_ch_1);
-
-
 	nrfx_gppi_channel_endpoints_setup(dppi_ch_1,
 			nrf_timer_event_address_get(m_sample_timer.p_reg,
 				NRF_TIMER_EVENT_COMPARE0),
-			nrf_gpiote_task_address_get(NRF_GPIOTE,
-				nrfx_gpiote_in_event_get(PIN_LED0)));
+			nrf_spim_task_address_get(NRF_SPIM2,
+				NRF_SPIM_TASK_START));
 
+
+	/* Tie it all together */
+	nrf_timer_publish_set(m_sample_timer.p_reg, NRF_TIMER_EVENT_COMPARE0, dppi_ch_1);
+	nrf_spim_subscribe_set(spi_instance.p_reg, NRF_SPIM_TASK_START, dppi_ch_1);
 }
-#endif
 
 void main(void)
 {
-    printk("Starting Fancy Blinker Application...\n");
+    printk("Timer + DPPI + SPIM Application...\n");
 	timer_init();
-
-#if defined(LED_GPIOTE)
-	gpiote_init();
-	dppi_init();
-	printk("Timer + DPPI + GPIOTE Mode\n");
-#else
-	gpio_init();
-	printk("Timer + GPIO Mode\n");
-#endif    
-
+	spi_init();
+	dppi_init(); 
 }
 
 
