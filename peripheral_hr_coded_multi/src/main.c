@@ -85,7 +85,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		printk("Disconnect: %s, tx_phy %u, rx_phy %u\n",
 	       addr, phy_info->tx_phy, phy_info->rx_phy);
 
-		if(phy_info->tx_phy==BT_CONN_LE_PHY_OPT_CODED_S8) {
+		if(phy_info->tx_phy==4) {
 			k_work_submit(&start_coded_advertising_worker);
 		} else {
 			k_work_submit(&start_regular_advertising_worker);
