@@ -2,6 +2,14 @@
 	"folders": [
 		{
 			"path": "fancy_blink"
+		},
+		{
+			"name": "timer_dppi_spim",
+			"path": "timer_dppi_spim"
+		},
+		{
+			"name": "peripheral_hr_coded_multi",
+			"path": "peripheral_hr_coded_multi"
 		}
 	],
 	"settings": {
@@ -12,15 +20,19 @@
 			"nrfx_spim.h": "c"
 		},
 		"nrf-connect.applications": [
-			"c:\\Work\\Ventrix\\blinky",
-			"c:\\Work\\nrf-examples\\fancy_blink"
+			"c:\\Work\\nrf-examples\\fancy_blink",
+			"c:\\Work\\nrf-examples\\timer_dppi_spim",
+			"c:\\Work\\nrf-examples\\peripheral_hr_coded_multi",
+			"c:\\Work\\nrf-examples\\central_hr_coded"
 		],
 		"kconfig.zephyr.west": "c:\\Work\\nrf-tm\\v1.7.0\\toolchain\\opt\\bin\\Scripts\\west.exe",
 		"kconfig.zephyr.base": "c:\\Work\\nrf-tm\\v1.7.0\\zephyr",
 		"kconfig.zephyr.board": {
-			"board": "nrf5340dk_nrf5340_cpuappns",
+			"board": "nrf5340dk_nrf5340_cpuapp",
 			"arch": "arm",
-			"dir": "c:\\Work\\nrf-tm\\v1.6.1\\zephyr\\boards\\arm\\nrf5340dk_nrf5340"
-		}
+			"dir": "c:\\Work\\nrf-tm\\v1.7.0\\zephyr\\boards\\arm\\nrf5340dk_nrf5340"
+		},
+		"nrf-connect.toolchain.path": "c:\\Work\\nrf-tm\\v1.7.0\\toolchain",
+		"nrf-connect.topdir": "c:\\Work\\nrf-tm\\v1.7.0"
 	}
 }
