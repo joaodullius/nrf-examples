@@ -5,13 +5,15 @@
  */
 
 #include <zephyr.h>
-
 #include <devicetree.h>
 
 #include <nrfx_timer.h>
 #include <nrfx_dppi.h>
 #include <helpers/nrfx_gppi.h>
 #include <nrfx_spim.h>
+
+#include <logging/log.h>
+LOG_MODULE_REGISTER(timer_dppi_spim, LOG_LEVEL_INF);
 
 static const nrfx_timer_t m_sample_timer = NRFX_TIMER_INSTANCE(1);
 
@@ -32,6 +34,7 @@ nrfx_spim_config_t spi_config =
 
 void timer_handler(nrf_timer_event_t event_type, void* p_context)
 {
+	LOG_DBG("Timer Handler.");
 
 }
 
@@ -41,16 +44,16 @@ static void timer_init(void)
 	timer_config.bit_width = NRF_TIMER_BIT_WIDTH_32;
     nrfx_err_t err_code = nrfx_timer_init(&m_sample_timer, &timer_config, timer_handler);
     if (err_code != NRFX_SUCCESS) {
-        printk("nrfx_timer_init error: %08x\n", err_code);
+        LOG_ERR("nrfx_timer_init error: %08x", err_code);
         return;
     }
     nrfx_timer_extended_compare(&m_sample_timer,
                                 NRF_TIMER_CC_CHANNEL0,
-                                nrfx_timer_ms_to_ticks(&m_sample_timer, 1000),
+                                nrfx_timer_us_to_ticks(&m_sample_timer, 500),
                                 NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK,
                                 true);
     
-    printk("Timer 1 initialized.\n");
+    LOG_INF("Timer 1 initialized.");
     nrfx_timer_enable(&m_sample_timer);
 
 	
@@ -61,7 +64,7 @@ static void timer_init(void)
 static void spim_handler(nrfx_spim_evt_t const *p_event, void *p_context)
 {
 	if (p_event->type == NRFX_SPIM_EVENT_DONE) {
-		printk("SPI transfer finished");
+		LOG_INF("SPI transfer finished");
 	}
 }
 
@@ -69,12 +72,24 @@ static void spi_init(void)
 {
 	nrfx_err_t err_code;
 	
+	spi_config.frequency = NRF_SPIM_FREQ_1M;
+
+	IRQ_CONNECT(SPIM2_SPIS2_TWIM2_TWIS2_UARTE2_IRQn, 5, nrfx_isr,
+		    nrfx_spim_2_irq_handler, 0);
+
 	err_code = nrfx_spim_init(&spi_instance, &spi_config, spim_handler, NULL);
 
 	if (err_code != NRFX_SUCCESS) {
-		printk("nrfx_spim_init error: %08x", err_code);
+		LOG_ERR("nrfx_spim_init error: %08x", err_code);
 		return;
 	}
+
+	err_code = nrfx_spim_xfer(&spi_instance, &transfer, 0);
+	if (err_code != NRFX_SUCCESS) {
+		LOG_ERR("SPI transfer error: %08x", err_code);
+		return;
+	}
+
 }
 
 static void dppi_init(void)
@@ -82,13 +97,13 @@ static void dppi_init(void)
 	uint8_t dppi_ch_1;
 	nrfx_err_t err = nrfx_dppi_channel_alloc(&dppi_ch_1);
 	if (err != NRFX_SUCCESS) {
-		printk("Err %d\n", err);
+		LOG_ERR("Err %d", err);
 		return;
 	}
 
 	err = nrfx_dppi_channel_enable(dppi_ch_1);
 	if (err != NRFX_SUCCESS) {
-		printk("Err %d\n", err);
+		LOG_ERR("Err %d", err);
 		return;
 	}
 
@@ -106,7 +121,7 @@ static void dppi_init(void)
 
 void main(void)
 {
-    printk("Timer + DPPI + SPIM Application...\n");
+    LOG_INF("Timer + DPPI + SPIM Application...");
 	timer_init();
 	spi_init();
 	dppi_init(); 
