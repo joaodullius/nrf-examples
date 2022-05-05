@@ -1,0 +1,17 @@
+&uart0 {
+	//rts-pin = <27>;
+	//cts-pin = <26>;
+
+	rts-pin = <30>;
+	cts-pin = <31>;
+};
+
+&i2c2 {
+	//sda-pin = <30>;
+	//scl-pin = <31>;
+
+	sda-pin = <26>;
+	scl-pin = <27>;
+
+
+};
