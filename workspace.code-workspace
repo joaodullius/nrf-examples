@@ -10,6 +10,10 @@
 		{
 			"name": "peripheral_hr_coded_multi",
 			"path": "peripheral_hr_coded_multi"
+		},
+		{
+			"name": "i2c_scanner",
+			"path": "i2c_scanner"
 		}
 	],
 	"settings": {
@@ -23,7 +27,8 @@
 			"c:\\Work\\nrf-examples\\fancy_blink",
 			"c:\\Work\\nrf-examples\\timer_dppi_spim",
 			"c:\\Work\\nrf-examples\\peripheral_hr_coded_multi",
-			"c:\\Work\\nrf-examples\\central_hr_coded"
+			"c:\\Work\\nrf-examples\\central_hr_coded",
+			"c:\\Work\\nrf-examples\\i2c_scanner"
 		],
 		"kconfig.zephyr.west": "c:\\Work\\nrf-tm\\v1.7.0\\toolchain\\opt\\bin\\Scripts\\west.exe",
 		"kconfig.zephyr.base": "c:\\Work\\nrf-tm\\v1.7.0\\zephyr",
