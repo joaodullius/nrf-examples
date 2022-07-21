@@ -1,0 +1,8 @@
+{
+  "nrf-connect.topdir": "${nrf-connect.sdk:2.0.0}",
+  "nrf-connect.toolchain.path": "${nrf-connect.toolchain:2.0.0}",
+  "nrf-connect.applications": [
+    "c:\\Work\\nrf-examples\\lp_hci_nrf9160dk\\hci_lpuart",
+    "c:\\Work\\nrf-examples\\lp_hci_nrf9160dk\\lte_ble_gateway"
+  ]
+}
