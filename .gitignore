@@ -1,4 +1,3 @@
-*/.vscode/
-*/build*/
-*/nrf5*/
-*/*.7z
+build*/
+*.code-workspace
+.vscode/
