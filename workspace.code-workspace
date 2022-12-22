@@ -1,43 +1,20 @@
 {
 	"folders": [
 		{
-			"path": "fancy_blink"
+			"name": "ble_custom_auth",
+			"path": "pairing_fixed_passkey/ble_custom_auth"
 		},
 		{
-			"name": "timer_dppi_spim",
-			"path": "timer_dppi_spim"
-		},
-		{
-			"name": "peripheral_hr_coded_multi",
-			"path": "peripheral_hr_coded_multi"
-		},
-		{
-			"name": "i2c_scanner",
-			"path": "i2c_scanner"
+			"name": "scan_adv",
+			"path": "pairing_fixed_passkey/scan_adv"
 		}
 	],
 	"settings": {
-		"files.associations": {
-			"timing.h": "c",
-			"nrfx_gpiote.h": "c",
-			"nrfx_dppi.h": "c",
-			"nrfx_spim.h": "c"
-		},
+		"nrf-connect.topdir": "${nrf-connect.sdk:2.2.0}",
+		"nrf-connect.toolchain.path": "${nrf-connect.toolchain:2.2.0}",
 		"nrf-connect.applications": [
-			"c:\\Work\\nrf-examples\\fancy_blink",
-			"c:\\Work\\nrf-examples\\timer_dppi_spim",
-			"c:\\Work\\nrf-examples\\peripheral_hr_coded_multi",
-			"c:\\Work\\nrf-examples\\central_hr_coded",
-			"c:\\Work\\nrf-examples\\i2c_scanner"
-		],
-		"kconfig.zephyr.west": "c:\\Work\\nrf-tm\\v1.7.0\\toolchain\\opt\\bin\\Scripts\\west.exe",
-		"kconfig.zephyr.base": "c:\\Work\\nrf-tm\\v1.7.0\\zephyr",
-		"kconfig.zephyr.board": {
-			"board": "nrf5340dk_nrf5340_cpuapp",
-			"arch": "arm",
-			"dir": "c:\\Work\\nrf-tm\\v1.7.0\\zephyr\\boards\\arm\\nrf5340dk_nrf5340"
-		},
-		"nrf-connect.toolchain.path": "c:\\Work\\nrf-tm\\v1.7.0\\toolchain",
-		"nrf-connect.topdir": "c:\\Work\\nrf-tm\\v1.7.0"
+			"${workspaceFolder}",
+			"${workspaceFolder:scan_adv}"
+		]
 	}
 }
