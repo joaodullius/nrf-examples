@@ -60,7 +60,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	LOG_INF("Connected: %s", addr);
 
-	err = bt_conn_set_security(conn, BT_SECURITY_L2);
+	err = bt_conn_set_security(conn, BT_SECURITY_L4);
 	if (err) {
 		LOG_WRN("Failed to set security: %d", err);
 
@@ -103,9 +103,9 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
 	if (!err) {
-		LOG_INF("Security changed: %s level %u", addr, level);
+		LOG_WRN("Security changed: %s level %u", addr, level);
 	} else {
-		LOG_WRN("Security failed: %s level %u err %d", addr,
+		LOG_ERR("Security failed: %s level %u err %d", addr,
 			level, err);
 	}
 
@@ -147,10 +147,8 @@ BT_SCAN_CB_INIT(scan_cb, scan_filter_match, NULL,
 static int scan_init(void)
 {
 	int err;
-
 	struct bt_scan_init_param scan_init = {
 		.connect_if_match = 1,
-		.scan_param = NULL,
 	};
 
 
@@ -171,6 +169,23 @@ static int scan_init(void)
 
 	LOG_INF("Scan module initialized");
 	return err;
+}
+
+
+static void auth_passkey_entry(struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	default_conn = bt_conn_ref(conn);
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+    // Check for passkey entry event
+    unsigned int passkey = FIXED_PASSWORD;
+	LOG_INF("Passkey entered %s: %06u", addr, passkey);
+
+        // Set passkey using bt_conn_auth_passkey_entry()
+	 bt_conn_auth_passkey_entry(conn, passkey);
 }
 
 
@@ -199,18 +214,6 @@ static void auth_cancel(struct bt_conn *conn)
 }
 
 
-static void passkey_entry(struct bt_conn *conn)
-{
-	unsigned int fixed_passkey = FIXED_PASSWORD;
-	char addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	LOG_INF("Passkey entry request for %s", addr);
-
-	bt_passkey_set(fixed_passkey);
-
-}
-
 static void pairing_complete(struct bt_conn *conn, bool bonded)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -230,10 +233,13 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 	LOG_ERR("Pairing failed conn: %s, reason %d", addr, reason);
 }
 
+
+
 static struct bt_conn_auth_cb conn_auth_callbacks = {
-	.passkey_entry = passkey_entry,
+	.passkey_entry = auth_passkey_entry,
 	.cancel = auth_cancel,
 };
+
 
 static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
 	.pairing_complete = pairing_complete,

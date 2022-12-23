@@ -18,7 +18,7 @@
 static uint8_t button_value = 0;
 
 static bool   notify_enabled;
-static struct bt_conn *current_conn;
+
 
 #define LOG_MODULE_NAME app
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
@@ -44,6 +44,8 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #define FIXED_PASSWORD 123456
 
+static struct bt_conn *current_conn;
+static struct bt_conn *auth_conn;
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
@@ -108,12 +110,16 @@ BT_GATT_SERVICE_DEFINE( custom_srv,
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	char addr[BT_ADDR_LE_STR_LEN];
+
 	if (err) {
 		LOG_ERR("Connection failed (err %u)", err);
 		return;
 	}
 
-	LOG_INF("Connected");
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	LOG_INF("Connected %s", addr);
+
 	current_conn = bt_conn_ref(conn);
 
 	dk_set_led_on(CON_STATUS_LED);
@@ -121,12 +127,22 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-	LOG_WRN("Disconnected (reason %u)", reason);
-	if(current_conn) {
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	LOG_INF("Disconnected: %s (reason %u)", addr, reason);
+
+	if (auth_conn) {
+		bt_conn_unref(auth_conn);
+		auth_conn = NULL;
+	}
+
+	if (current_conn) {
 		bt_conn_unref(current_conn);
 		current_conn = NULL;
+		dk_set_led_off(CON_STATUS_LED);
 	}
-	dk_set_led_off(CON_STATUS_LED);
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
@@ -139,8 +155,8 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 	if (!err) {
 		LOG_WRN("Security changed: %s level %u", addr, level);
 	} else {
-		LOG_ERR("Security failed: %s level %u err %d", addr, level,
-			err);
+		LOG_ERR("Security failed: %s level %u err %d", addr,
+			level, err);
 	}
 }
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -149,14 +165,22 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.security_changed = security_changed,
 };
 
-static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
+static void auth_passkey_entry(struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
+	current_conn = bt_conn_ref(conn);
+
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	LOG_INF("Passkey for %s: %06u", addr, passkey);
+    // Check for passkey entry event
+    unsigned int passkey = FIXED_PASSWORD;
+	LOG_INF("Passkey entered %s: %06u", addr, passkey);
+
+        // Set passkey using bt_conn_auth_passkey_entry()
+	 bt_conn_auth_passkey_entry(conn, passkey);
 }
+
 static void auth_cancel(struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -197,10 +221,13 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 
 /* Callbacks */
 static struct bt_conn_auth_cb conn_auth_callbacks = {
-.passkey_display = auth_passkey_display,
+.passkey_display = NULL,
+.passkey_confirm = NULL,
+.passkey_entry = auth_passkey_entry,
 .cancel = auth_cancel,
 .pairing_confirm = pairing_confirm,
 };
+
 static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
 	.pairing_complete = pairing_complete,
 	.pairing_failed = pairing_failed
@@ -288,13 +315,12 @@ void main(void)
     }
 
 
-	unsigned int passkey = FIXED_PASSWORD;
 	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
 	if (err) {
 		LOG_ERR("Failed to register authorization callbacks.");
 		return;
 	}
-	bt_passkey_set(passkey);
+
 	err = bt_conn_auth_info_cb_register(&conn_auth_info_callbacks);
 	if (err) {
 		LOG_ERR("Failed to register authorization info callbacks.");
@@ -309,8 +335,8 @@ void main(void)
 	}
 	LOG_INF("Bluetooth initialized");
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad),
-			      sd, ARRAY_SIZE(sd));
+	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd,
+			      ARRAY_SIZE(sd));
 	if (err) {
 		LOG_ERR("Advertising failed to start (err %d)", err);
 		return;
