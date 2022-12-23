@@ -188,22 +188,6 @@ static void auth_passkey_entry(struct bt_conn *conn)
 	 bt_conn_auth_passkey_entry(conn, passkey);
 }
 
-
-static void start_scan(void)
-{
-	int err;
-
-	scan_init();
-
-	err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
-	if (err) {
-		LOG_ERR("Scanning failed to start (err %d)", err);
-		return;
-	}
-
-	LOG_INF("Scanning successfully started");
-}
-
 static void auth_cancel(struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -271,6 +255,19 @@ void main(void)
 
 	LOG_INF("Bluetooth initialized");
 
-	start_scan();
+	err = scan_init();
+	if (err) {
+		LOG_ERR("Scanning failed to init (err %d)", err);
+		return;
+	}
+
+	LOG_INF("Scanning successfully started");
+	err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
+	if (err) {
+		LOG_ERR("Scanning failed to start (err %d)", err);
+		return;
+	}
+
+	LOG_INF("Scanning successfully started");
 }
 
