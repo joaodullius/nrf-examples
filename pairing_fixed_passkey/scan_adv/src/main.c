@@ -23,9 +23,6 @@
 #define LOG_MODULE_NAME ble_scanner
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
-static void start_scan(void);
-
-
 #define BT_UUID_CUSTOM_SERV_VAL \
    BT_UUID_128_ENCODE(0x86b50001, 0x7ff7, 0x496e, 0xaa9c, 0x05fc11855eb3)
 #define BT_UUID_CUSTOM_SERVICE  BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERV_VAL)
@@ -255,11 +252,7 @@ void main(void)
 
 	LOG_INF("Bluetooth initialized");
 
-	err = scan_init();
-	if (err) {
-		LOG_ERR("Scanning failed to init (err %d)", err);
-		return;
-	}
+	scan_init();
 
 	LOG_INF("Scanning successfully started");
 	err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);

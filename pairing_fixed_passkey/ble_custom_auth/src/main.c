@@ -10,10 +10,11 @@
 #include <dk_buttons_and_leds.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/hci.h>
+
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
 
 static uint8_t button_value = 0;
 
@@ -169,7 +170,7 @@ static void auth_passkey_entry(struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
-	current_conn = bt_conn_ref(conn);
+	auth_conn = bt_conn_ref(conn);
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
