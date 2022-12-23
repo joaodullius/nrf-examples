@@ -26,6 +26,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #define RUN_STATUS_LED          DK_LED1
 #define CON_STATUS_LED			DK_LED2
+#define CHRC_STATUS_LED			DK_LED3
 #define RUN_LED_BLINK_INTERVAL  1000
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
@@ -70,8 +71,18 @@ static ssize_t on_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
     memcpy(temp_str, buf, len);
     temp_str[len] = 0x00;
 
-    LOG_INF("Received data on conn %p. Len: %d", (void *)conn, len);
-	LOG_HEXDUMP_INF(temp_str, len, "Received");
+    LOG_DBG("Received data on conn %p. Len: %d", (void *)conn, len);
+	LOG_HEXDUMP_DBG(temp_str, len, "Received");
+	
+	if (temp_str[0] == 0x01) {
+        LOG_DBG("Received value: 0x01, setting LED on\n");
+		dk_set_led_on(CHRC_STATUS_LED);
+
+    } else if (temp_str[0] == 0x00) {
+
+        LOG_DBG("Received value: 0x00, setting LED off\n");
+		dk_set_led_off(CHRC_STATUS_LED);
+	}
 	return len;
 }
 
@@ -102,12 +113,10 @@ BT_GATT_SERVICE_DEFINE( custom_srv,
 												NULL, NULL),
 						BT_GATT_CCC(button_chrc_ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
 						BT_GATT_CHARACTERISTIC( BT_UUID_ADV_PERIOD_CHRC,
-                                                BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+                                                BT_GATT_CHRC_WRITE,
                                                 BT_GATT_PERM_WRITE_AUTHEN,
                                                 NULL, on_write, NULL),
                         );
-
-
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
