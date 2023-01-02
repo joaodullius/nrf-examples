@@ -199,6 +199,60 @@ static void scan_connecting(struct bt_scan_device_info *device_info,
 	default_conn = bt_conn_ref(conn);
 }
 
+static void ble_data_sent(struct bt_simple_service *simple_service, uint8_t err,
+					const uint8_t *const data, uint16_t len)
+{
+	ARG_UNUSED(simple_service);
+
+	LOG_DBG("Local BLE Write Callback fired. Nothing else to do.");
+
+	if (err) {
+		LOG_WRN("ATT error code: 0x%02X", err);
+	}
+}
+
+static uint8_t ble_data_received(struct bt_simple_service *simple_service,
+						const uint8_t *data, uint16_t len)
+{
+	ARG_UNUSED(simple_service);
+
+    if (*data == 0x01) {
+        LOG_DBG("Received value: 0x01, setting LED on");
+		dk_set_led_on(CHRC_STATUS_LED);
+
+    } else if (*data == 0x00) {
+
+        LOG_DBG("Received value: 0x00, setting LED off");
+		dk_set_led_off(CHRC_STATUS_LED);
+	}
+    
+
+	return BT_GATT_ITER_CONTINUE;
+}
+
+
+static int simple_service_client_init(void)
+{
+	int err;
+	
+	struct bt_simple_service_client_init_param init = {
+		.cb = {
+			.received = ble_data_received,
+			.sent = ble_data_sent,
+		}
+	};
+
+	err = bt_simple_service_client_init(&simple_service, &init);
+	if (err) {
+		LOG_ERR("Client initialization failed (err %d)", err);
+		return err;
+	}
+	
+
+	LOG_INF("Client module initialized");
+	return err;
+}
+
 BT_SCAN_CB_INIT(scan_cb, scan_filter_match, NULL,
 		scan_connecting_error, scan_connecting);
 
@@ -349,6 +403,7 @@ void main(void)
 
 	LOG_INF("Bluetooth initialized");
 
+	simple_service_client_init();
 	scan_init();
 
 	LOG_INF("Scanning successfully started");

@@ -58,6 +58,13 @@ struct bt_simple_service_cb {
 	void (*unsubscribed)(struct bt_simple_service *simple_service);
 };
 
+/** @brief NUS Client initialization structure. */
+struct bt_simple_service_client_init_param {
+
+        /** Callbacks provided by the user. */
+	struct bt_simple_service_cb cb;
+};
+
 /**
  * @brief Custom Auth object.
  *
@@ -123,3 +130,7 @@ int bt_simple_service_handles_assign(struct bt_gatt_dm *dm,
 int bt_simple_service_subscribe_receive(struct bt_simple_service *simple_service_c);
 
 int bt_simple_service_set_led(struct bt_simple_service *simple_service_c, const uint8_t data);
+
+
+int bt_simple_service_client_init(struct bt_simple_service *simple_service_c,
+		       const struct bt_simple_service_client_init_param *simple_service_c_init);

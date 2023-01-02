@@ -26,6 +26,22 @@ enum {
 	SIMPLE_SERVICE_C_RX_WRITE_PENDING
 };
 
+int bt_simple_service_client_init(struct bt_simple_service *simple_service_c,
+		       const struct bt_simple_service_client_init_param *simple_service_c_init)
+{
+	if (!simple_service_c || !simple_service_c_init) {
+		return -EINVAL;
+	}
+
+	if (atomic_test_and_set_bit(&simple_service_c->state, SIMPLE_SERVICE_C_INITIALIZED)) {
+		return -EALREADY;
+	}
+
+	memcpy(&simple_service_c->cb, &simple_service_c_init->cb, sizeof(simple_service_c->cb));
+
+	return 0;
+}
+
 int bt_simple_service_handles_assign(struct bt_gatt_dm *dm,
 			  struct bt_simple_service *simple_service_c)
 
@@ -152,20 +168,25 @@ int bt_simple_service_subscribe_receive(struct bt_simple_service *simple_service
 	return err;
 }
 
-static void write_cb(struct bt_conn *conn, uint8_t err,
+static void on_sent(struct bt_conn *conn, uint8_t err,
                      struct bt_gatt_write_params *params)
 {
 
 	struct bt_simple_service *simple_service_c;
+    const void *data;
+	uint16_t length;
 
 	/* Retrieve module context. */
 	simple_service_c = CONTAINER_OF(params, struct bt_simple_service, write_params);
 
-    if (err) {
-        LOG_ERR("Write failed (err %u)", err);
-    } else {
-        LOG_DBG("Write complete");
-    }
+    /* Make a copy of volatile data that is required by the callback. */
+	data = params->data;
+	length = params->length;
+
+	atomic_clear_bit(&simple_service_c->state, SIMPLE_SERVICE_C_RX_WRITE_PENDING);
+	if (simple_service_c->cb.sent) {
+		simple_service_c->cb.sent(simple_service_c, err, data, length);
+	}
 	
 }
 
@@ -177,7 +198,11 @@ int bt_simple_service_set_led(struct bt_simple_service *simple_service_c, const 
 		return -ENOTCONN;
 	}
 
-    simple_service_c->write_params.func = write_cb;
+    if (atomic_test_and_set_bit(&simple_service_c->state, SIMPLE_SERVICE_C_RX_WRITE_PENDING)) {
+		return -EALREADY;
+	}
+
+    simple_service_c->write_params.func = on_sent;
     simple_service_c->write_params.handle = simple_service_c->handles.led; /* replace with the handle of the characteristic */
     simple_service_c->write_params.length = sizeof(data);
 	simple_service_c->write_params.offset = 0;
@@ -185,6 +210,7 @@ int bt_simple_service_set_led(struct bt_simple_service *simple_service_c, const 
 
 	err = bt_gatt_write(simple_service_c->conn, &simple_service_c->write_params);
 	if (err) {
+        atomic_clear_bit(&simple_service_c->state, SIMPLE_SERVICE_C_RX_WRITE_PENDING);
 		LOG_ERR("bt_gatt_write Error");
 	}
 
