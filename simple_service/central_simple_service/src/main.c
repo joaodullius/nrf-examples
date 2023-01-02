@@ -41,35 +41,35 @@ static void discovery_completed_cb(struct bt_gatt_dm *dm,
 {
 	int err;
 
-	printk("The discovery procedure succeeded\n");
+	LOG_INF("The discovery procedure succeeded");
 
 	bt_gatt_dm_data_print(dm);
 
 	err = bt_simple_service_handles_assign(dm, &simple_service);
 	if (err) {
-		printk("Could not init client object, error: %d\n", err);
+		LOG_ERR("Could not init client object, error: %d", err);
 	}
 
 	bt_simple_service_subscribe_receive(&simple_service);
 
 	err = bt_gatt_dm_data_release(dm);
 	if (err) {
-		printk("Could not release the discovery data, error "
-		       "code: %d\n", err);
+		LOG_ERR("Could not release the discovery data, error "
+		       "code: %d", err);
 	}
 }
 
 static void discovery_service_not_found_cb(struct bt_conn *conn,
 					   void *context)
 {
-	printk("The service could not be found during the discovery\n");
+	LOG_ERR("The service could not be found during the discovery");
 }
 
 static void discovery_error_found_cb(struct bt_conn *conn,
 				     int err,
 				     void *context)
 {
-	printk("The discovery procedure failed with %d\n", err);
+	LOG_ERR("The discovery procedure failed with %d", err);
 }
 
 static const struct bt_gatt_dm_cb discovery_cb = {
@@ -86,7 +86,7 @@ static void gatt_discover(struct bt_conn *conn)
 
 	err = bt_gatt_dm_start(conn, BT_UUID_CUSTOM_SERVICE, &discovery_cb, NULL);
 		if (err) {
-			printk("Failed to start discovery (err %d)\n", err);
+			LOG_ERR("Failed to start discovery (err %d)", err);
 		}
 }
 
