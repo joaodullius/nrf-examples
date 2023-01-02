@@ -6,8 +6,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "custom_auth.h"
-#include "custom_auth_client.h"
+#include "simple_service.h"
+#include "simple_service_client.h"
 
 #include <zephyr/types.h>
 #include <stddef.h>
@@ -29,9 +29,9 @@
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
 enum {
-	NUS_C_INITIALIZED,
-	NUS_C_BUTTOM_NOTIF_ENABLED,
-	NUS_C_RX_WRITE_PENDING
+	SIMPLE_SERVICE_C_INITIALIZED,
+	SIMPLE_SERVICE_C_BUTTOM_NOTIF_ENABLED,
+	SIMPLE_SERVICE_C_RX_WRITE_PENDING
 };
 
 #define CHRC_STATUS_LED         DK_LED1
@@ -40,17 +40,17 @@ enum {
 #define FIXED_PASSWORD 123456
 
 static struct bt_conn *default_conn;
-static struct bt_custom_auth custom_auth;
+static struct bt_simple_service simple_service;
 
 
 static void write_cb(struct bt_conn *conn, uint8_t err,
                      struct bt_gatt_write_params *params)
 {
 
-	struct bt_custom_auth *custom_auth_c;
+	struct bt_simple_service *simple_service_c;
 
 	/* Retrieve module context. */
-	custom_auth_c = CONTAINER_OF(params, struct bt_custom_auth, write_params);
+	simple_service_c = CONTAINER_OF(params, struct bt_simple_service, write_params);
 
     if (err) {
         printk("Write failed (err %u)\n", err);
@@ -60,21 +60,21 @@ static void write_cb(struct bt_conn *conn, uint8_t err,
 	
 }
 
-int bt_custom_auth_set_led(struct bt_custom_auth *custom_auth_c, const uint8_t data)
+int bt_simple_service_set_led(struct bt_simple_service *simple_service_c, const uint8_t data)
 {
 	int err;
 
-	if (!custom_auth_c->conn) {
+	if (!simple_service_c->conn) {
 		return -ENOTCONN;
 	}
 
-    custom_auth_c->write_params.func = write_cb;
-    custom_auth_c->write_params.handle = custom_auth_c->handles.led; /* replace with the handle of the characteristic */
-    custom_auth_c->write_params.length = sizeof(data);
-	custom_auth_c->write_params.offset = 0;
-    custom_auth_c->write_params.data = &data;
+    simple_service_c->write_params.func = write_cb;
+    simple_service_c->write_params.handle = simple_service_c->handles.led; /* replace with the handle of the characteristic */
+    simple_service_c->write_params.length = sizeof(data);
+	simple_service_c->write_params.offset = 0;
+    simple_service_c->write_params.data = &data;
 
-	err = bt_gatt_write(custom_auth_c->conn, &custom_auth_c->write_params);
+	err = bt_gatt_write(simple_service_c->conn, &simple_service_c->write_params);
 	if (err) {
 		LOG_ERR("bt_gatt_write Error");
 	}
@@ -84,8 +84,8 @@ int bt_custom_auth_set_led(struct bt_custom_auth *custom_auth_c, const uint8_t d
 }
 
 
-int bt_custom_auth_handles_assign(struct bt_gatt_dm *dm,
-			  struct bt_custom_auth *custom_auth_c)
+int bt_simple_service_handles_assign(struct bt_gatt_dm *dm,
+			  struct bt_simple_service *simple_service_c)
 
 {
 	const struct bt_gatt_dm_attr *gatt_service_attr =
@@ -99,8 +99,7 @@ int bt_custom_auth_handles_assign(struct bt_gatt_dm *dm,
 		return -ENOTSUP;
 	}
 	LOG_DBG("Getting handles from Custom Auth service.");
-	memset(&custom_auth_c->handles, 0xFF, sizeof(custom_auth_c->handles));
-
+	memset(&simple_service_c->handles, 0xFF, sizeof(simple_service_c->handles));
 
 	/* Get Led (WRITE) Chatacteristic */
 	gatt_chrc = bt_gatt_dm_char_by_uuid(dm, BT_UUID_CUSTOM_LED);
@@ -114,7 +113,7 @@ int bt_custom_auth_handles_assign(struct bt_gatt_dm *dm,
 		return -EINVAL;
 	}
 	LOG_DBG("Found handle for LED Write characteristic = 0x%x.",  gatt_desc->handle);
-	custom_auth_c->handles.led = gatt_desc->handle;
+	simple_service_c->handles.led = gatt_desc->handle;
 
 
 	/* Get Button (READ) Characterstic and CCC*/
@@ -129,19 +128,19 @@ int bt_custom_auth_handles_assign(struct bt_gatt_dm *dm,
 		return -EINVAL;
 	}
 	LOG_DBG("Found handle for BUTTON Read characteristic.");
-	custom_auth_c->handles.button = gatt_desc->handle;
-	/* NUS TX CCC */
+	simple_service_c->handles.button = gatt_desc->handle;
+	/* Button (Read) CCC */
 	gatt_desc = bt_gatt_dm_desc_by_uuid(dm, gatt_chrc, BT_UUID_GATT_CCC);
 	if (!gatt_desc) {
 		LOG_ERR("Missing Button Read CCC in characteristic.");
 		return -EINVAL;
 	}
 	LOG_DBG("Found handle for CCC of BUTTON Read characteristic.");
-	custom_auth_c->handles.button_ccc = gatt_desc->handle;
+	simple_service_c->handles.button_ccc = gatt_desc->handle;
 
 
 	/* Assign connection instance. */
-	custom_auth_c->conn = bt_gatt_dm_conn_get(dm);
+	simple_service_c->conn = bt_gatt_dm_conn_get(dm);
 	return 0;
 }
 
@@ -149,17 +148,17 @@ static uint8_t on_received(struct bt_conn *conn,
 			struct bt_gatt_subscribe_params *params,
 			const void *data, uint16_t length)
 {
-	struct bt_custom_auth *custom_auth;
+	struct bt_simple_service *simple_service;
 
-	/* Retrieve NUS Client module context. */
-	custom_auth = CONTAINER_OF(params, struct bt_custom_auth, button_notif_params);
+	/* Retrieve Client module context. */
+	simple_service = CONTAINER_OF(params, struct bt_simple_service, button_notif_params);
 
 	if (!data) {
 		LOG_DBG("[UNSUBSCRIBED]");
 		params->value_handle = 0;
-		atomic_clear_bit(&custom_auth->state, NUS_C_BUTTOM_NOTIF_ENABLED);
-		if (custom_auth->cb.unsubscribed) {
-			custom_auth->cb.unsubscribed(custom_auth);
+		atomic_clear_bit(&simple_service->state, SIMPLE_SERVICE_C_BUTTOM_NOTIF_ENABLED);
+		if (simple_service->cb.unsubscribed) {
+			simple_service->cb.unsubscribed(simple_service);
 		}
 		return BT_GATT_ITER_STOP;
 	}
@@ -176,32 +175,32 @@ static uint8_t on_received(struct bt_conn *conn,
 		dk_set_led_off(CHRC_STATUS_LED);
 	}
 
-	if (custom_auth->cb.received) {
-		return custom_auth->cb.received(custom_auth, data, length);
+	if (simple_service->cb.received) {
+		return simple_service->cb.received(simple_service, data, length);
 	}
 
 	return BT_GATT_ITER_CONTINUE;
 }
 
-int bt_nus_subscribe_receive(struct bt_custom_auth *custom_auth_c)
+int bt_simple_service_subscribe_receive(struct bt_simple_service *simple_service_c)
 {
 	int err;
 
-	if (atomic_test_and_set_bit(&custom_auth_c->state, NUS_C_BUTTOM_NOTIF_ENABLED)) {
+	if (atomic_test_and_set_bit(&simple_service_c->state, SIMPLE_SERVICE_C_BUTTOM_NOTIF_ENABLED)) {
 		return -EALREADY;
 	}
 
-	custom_auth_c->button_notif_params.notify = on_received;
-	custom_auth_c->button_notif_params.value = BT_GATT_CCC_NOTIFY;
-	custom_auth_c->button_notif_params.value_handle = custom_auth_c->handles.button;
-	custom_auth_c->button_notif_params.ccc_handle = custom_auth_c->handles.button_ccc;
-	atomic_set_bit(custom_auth_c->button_notif_params.flags,
+	simple_service_c->button_notif_params.notify = on_received;
+	simple_service_c->button_notif_params.value = BT_GATT_CCC_NOTIFY;
+	simple_service_c->button_notif_params.value_handle = simple_service_c->handles.button;
+	simple_service_c->button_notif_params.ccc_handle = simple_service_c->handles.button_ccc;
+	atomic_set_bit(simple_service_c->button_notif_params.flags,
 		       BT_GATT_SUBSCRIBE_FLAG_VOLATILE);
 
-	err = bt_gatt_subscribe(custom_auth_c->conn, &custom_auth_c->button_notif_params);
+	err = bt_gatt_subscribe(simple_service_c->conn, &simple_service_c->button_notif_params);
 	if (err) {
 		LOG_ERR("Subscribe failed (err %d)", err);
-		atomic_clear_bit(&custom_auth_c->state, NUS_C_BUTTOM_NOTIF_ENABLED);
+		atomic_clear_bit(&simple_service_c->state, SIMPLE_SERVICE_C_BUTTOM_NOTIF_ENABLED);
 	} else {
 		LOG_DBG("[SUBSCRIBED]");
 	}
@@ -219,12 +218,12 @@ static void discovery_completed_cb(struct bt_gatt_dm *dm,
 
 	bt_gatt_dm_data_print(dm);
 
-	err = bt_custom_auth_handles_assign(dm, &custom_auth);
+	err = bt_simple_service_handles_assign(dm, &simple_service);
 	if (err) {
 		printk("Could not init client object, error: %d\n", err);
 	}
 
-	bt_nus_subscribe_receive(&custom_auth);
+	bt_simple_service_subscribe_receive(&simple_service);
 
 	err = bt_gatt_dm_data_release(dm);
 	if (err) {
@@ -472,7 +471,7 @@ void button_handler(uint32_t button_state, uint32_t has_changed)
 		{
 			case DK_BTN1_MSK:
 				LOG_INF("Button 1 state = %d.", button_state);
-				bt_custom_auth_set_led(&custom_auth, (uint8_t)button_state);
+				bt_simple_service_set_led(&simple_service, (uint8_t)button_state);
 				break;
 			case DK_BTN2_MSK:
 				break;

@@ -11,7 +11,7 @@
 /** @brief Handles on the connected peer device that are needed to interact with
  * the device.
  */
-struct bt_custom_auth_client_handles {
+struct bt_simple_service_client_handles {
 
         /** Handle of the LED characteristic, as provided by
 	 *  a discovery.
@@ -21,41 +21,41 @@ struct bt_custom_auth_client_handles {
 	uint16_t button_ccc;
 };
 
-struct bt_custom_auth;
+struct bt_simple_service;
 
-struct bt_custom_auth_cb {
+struct bt_simple_service_cb {
 	/** @brief Data received callback.
 	 *
-	 * The data has been received as a notification of the NUS TX
+	 * The data has been received as a notification of the Read
 	 * Characteristic.
 	 *
-	 * @param[in] nus  NUS Client instance.
+	 * @param[in] simple_service  Simple Service Client instance.
 	 * @param[in] data Received data.
 	 * @param[in] len Length of received data.
 	 *
 	 * @retval BT_GATT_ITER_CONTINUE To keep notifications enabled.
 	 * @retval BT_GATT_ITER_STOP To disable notifications.
 	 */
-	uint8_t (*received)(struct bt_custom_auth *nus, const uint8_t *data, uint16_t len);
+	uint8_t (*received)(struct bt_simple_service *simple_service, const uint8_t *data, uint16_t len);
 
 	/** @brief Data sent callback.
 	 *
-	 * The data has been sent and written to the NUS RX Characteristic.
+	 * The data has been sent and written to the Write Characteristic.
 	 *
-	 * @param[in] nus  NUS Client instance.
+	 * @param[in] simple_service  Simple Service Client instance.
 	 * @param[in] err ATT error code.
 	 * @param[in] data Transmitted data.
 	 * @param[in] len Length of transmitted data.
 	 */
-	void (*sent)(struct bt_custom_auth *nus, uint8_t err, const uint8_t *data, uint16_t len);
+	void (*sent)(struct bt_simple_service *simple_service, uint8_t err, const uint8_t *data, uint16_t len);
 
 	/** @brief TX notifications disabled callback.
 	 *
 	 * TX notifications have been disabled.
 	 *
-	 * @param[in] nus  NUS Client instance.
+	 * @param[in] simple_service  Simple Service Client instance.
 	 */
-	void (*unsubscribed)(struct bt_custom_auth *nus);
+	void (*unsubscribed)(struct bt_simple_service *simple_service);
 };
 
 /**
@@ -67,13 +67,13 @@ struct bt_custom_auth_cb {
  * Do not use any of the fields here directly, but use the accessor functions.
  * There are accessors for every field you might need.
  */
-struct bt_custom_auth {
+struct bt_simple_service {
 	/** Connection object. */
 	struct bt_conn *conn;
 	/** Internal state. */
 	atomic_t state;
     /** Handles on the connected peer device that are needed to interact with the device. */
-	struct bt_custom_auth_client_handles handles;
+	struct bt_simple_service_client_handles handles;
 
 	/** GATT subscribe parameters for BUTTON Characteristic. */
 	struct bt_gatt_subscribe_params button_notif_params;
@@ -82,5 +82,5 @@ struct bt_custom_auth {
 	struct bt_gatt_write_params write_params;
 
 	/** Application callbacks. */
-	struct bt_custom_auth_cb cb;
+	struct bt_simple_service_cb cb;
 };
