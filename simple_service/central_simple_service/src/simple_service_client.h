@@ -84,3 +84,42 @@ struct bt_simple_service {
 	/** Application callbacks. */
 	struct bt_simple_service_cb cb;
 };
+
+
+
+/** @brief Assign handles to the NUS Client instance.
+ *
+ * This function should be called when a link with a peer has been established
+ * to associate the link to this instance of the module. This makes it
+ * possible to handle several links and associate each link to a particular
+ * instance of this module. The GATT attribute handles are provided by the
+ * GATT DB discovery module.
+ *
+ * @param[in] dm Discovery object.
+ * @param[in,out] nus NUS Client instance.
+ *
+ * @retval 0 If the operation was successful.
+ * @retval (-ENOTSUP) Special error code used when UUID
+ *         of the service does not match the expected UUID.
+ * @retval Otherwise, a negative error code is returned.
+ */
+int bt_simple_service_handles_assign(struct bt_gatt_dm *dm,
+			  struct bt_simple_service *simple_service_c);
+
+
+
+
+/** @brief Request the peer to start sending notifications for the TX
+ *	   Characteristic.
+ *
+ * This function enables notifications for the NUS TX Characteristic at the peer
+ * by writing to the CCC descriptor of the NUS TX Characteristic.
+ *
+ * @param[in,out] nus NUS Client instance.
+ *
+ * @retval 0 If the operation was successful.
+ *           Otherwise, a negative error code is returned.
+ */
+int bt_simple_service_subscribe_receive(struct bt_simple_service *simple_service_c);
+
+int bt_simple_service_set_led(struct bt_simple_service *simple_service_c, const uint8_t data);
