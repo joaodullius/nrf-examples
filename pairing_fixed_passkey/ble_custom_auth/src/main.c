@@ -36,13 +36,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
    BT_UUID_128_ENCODE(0x86b50001, 0x7ff7, 0x496e, 0xaa9c, 0x05fc11855eb3)
 #define BT_UUID_CUSTOM_SERVICE  BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERV_VAL)
 
-#define BT_UUID_ADV_PERIOD_CHRC_VAL \
+#define BT_UUID_CUSTOM_LED_CHAR_VAL \
    BT_UUID_128_ENCODE(0x86b50002, 0x7ff7, 0x496e, 0xaa9c, 0x05fc11855eb3)
-#define BT_UUID_ADV_PERIOD_CHRC  BT_UUID_DECLARE_128(BT_UUID_ADV_PERIOD_CHRC_VAL)
-
-#define BT_UUID_BUTTON_CHRC_VAL \
-   BT_UUID_128_ENCODE(0x86b50003, 0x7ff7, 0x496e, 0xaa9c, 0x05fc11855eb3)
-#define BT_UUID_BUTTON_CHRC  BT_UUID_DECLARE_128(BT_UUID_BUTTON_CHRC_VAL)
+#define BT_UUID_CUSTOM_LED  BT_UUID_DECLARE_128(BT_UUID_CUSTOM_LED_CHAR_VAL)
 
 #define FIXED_PASSWORD 123456
 
@@ -86,33 +82,9 @@ static ssize_t on_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	return len;
 }
 
-void button_chrc_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
-{
-   notify_enabled = (value == BT_GATT_CCC_NOTIFY);
-   LOG_INF("Notifications %s", notify_enabled? "enabled":"disabled");
-
-}
-
-
-static ssize_t read_button_chrc_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			 void *buf, uint16_t len, uint16_t offset)
-{
-	LOG_DBG("Attribute read, handle: %u, conn: %p", attr->handle,
-		(void *)conn);
-
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, &button_value,
-				 sizeof(button_value));
-}
-
 BT_GATT_SERVICE_DEFINE( custom_srv, 
                         BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
-						BT_GATT_CHARACTERISTIC(	BT_UUID_BUTTON_CHRC,
-                    							BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
-                    							BT_GATT_PERM_READ_AUTHEN,
-                    							read_button_chrc_cb,
-												NULL, NULL),
-						BT_GATT_CCC(button_chrc_ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
-						BT_GATT_CHARACTERISTIC( BT_UUID_ADV_PERIOD_CHRC,
+						BT_GATT_CHARACTERISTIC( BT_UUID_CUSTOM_LED,
                                                 BT_GATT_CHRC_WRITE,
                                                 BT_GATT_PERM_WRITE_AUTHEN,
                                                 NULL, on_write, NULL),
@@ -243,35 +215,7 @@ static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
 	.pairing_failed = pairing_failed
 };
 
-int send_button_notification(struct bt_conn *conn, uint8_t value)
-{
-	if (!notify_enabled) {
-		return -EACCES;
-	}
-    int err = 0;
 
-	return bt_gatt_notify(NULL, &custom_srv.attrs[2],
-			      &button_value,
-			      sizeof(button_value));
-
-    struct bt_gatt_notify_params params = {0};
-    const struct bt_gatt_attr *attr = &custom_srv.attrs[2];
-
-    params.attr = attr;
-    params.data = &value;
-    params.len = 1;
-    params.func = on_sent;
-
-    err = bt_gatt_notify_cb(conn, &params);
-
-    return err;
-}
-
-
-void set_button_value(uint8_t btn_value)
-{
-    button_value = btn_value;
-}
 
 void button_handler(uint32_t button_state, uint32_t has_changed)
 {
@@ -297,11 +241,6 @@ void button_handler(uint32_t button_state, uint32_t has_changed)
 				break;
 		}
         LOG_INF("Button %d pressed.", button_pressed);
-        set_button_value(button_pressed);
-		err = send_button_notification(current_conn, button_pressed);
-        if (err) {
-            LOG_ERR("Couldn't send notificaton. (err: %d)", err);
-        }
     }
 }
 

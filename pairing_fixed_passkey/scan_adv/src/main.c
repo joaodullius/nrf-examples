@@ -6,9 +6,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "custom_auth.h"
+#include "custom_auth_client.h"
+
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <zephyr/sys/util.h>
+
+#include <dk_buttons_and_leds.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -23,13 +28,141 @@
 #define LOG_MODULE_NAME ble_scanner
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
-#define BT_UUID_CUSTOM_SERV_VAL \
-   BT_UUID_128_ENCODE(0x86b50001, 0x7ff7, 0x496e, 0xaa9c, 0x05fc11855eb3)
-#define BT_UUID_CUSTOM_SERVICE  BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERV_VAL)
-
 #define FIXED_PASSWORD 123456
 
 static struct bt_conn *default_conn;
+static struct bt_custom_auth custom_auth;
+
+
+static void write_cb(struct bt_conn *conn, uint8_t err,
+                     struct bt_gatt_write_params *params)
+{
+
+	struct bt_custom_auth *custom_auth_c;
+
+	/* Retrieve NUS Client module context. */
+	custom_auth_c = CONTAINER_OF(params, struct bt_custom_auth, write_params);
+
+    if (err) {
+        printk("Write failed (err %u)\n", err);
+    } else {
+        printk("Write complete\n");
+    }
+	
+}
+
+int bt_custom_auth_set_led(struct bt_custom_auth *custom_auth_c, const uint8_t data)
+{
+	int err;
+
+	if (!custom_auth_c->conn) {
+		return -ENOTCONN;
+	}
+
+    custom_auth_c->write_params.func = write_cb;
+    custom_auth_c->write_params.handle = custom_auth_c->handles.led; /* replace with the handle of the characteristic */
+    custom_auth_c->write_params.length = sizeof(data);
+	custom_auth_c->write_params.offset = 0;
+    custom_auth_c->write_params.data = &data;
+
+	err = bt_gatt_write(custom_auth_c->conn, &custom_auth_c->write_params);
+	if (err) {
+		LOG_ERR("bt_gatt_write Error");
+	}
+
+	return err;
+
+}
+
+
+int bt_custom_auth_handles_assign(struct bt_gatt_dm *dm,
+			  struct bt_custom_auth *custom_auth_c)
+
+{
+	const struct bt_gatt_dm_attr *gatt_service_attr =
+			bt_gatt_dm_service_get(dm);
+	const struct bt_gatt_service_val *gatt_service =
+			bt_gatt_dm_attr_service_val(gatt_service_attr);
+	const struct bt_gatt_dm_attr *gatt_chrc;
+	const struct bt_gatt_dm_attr *gatt_desc;
+
+	if (bt_uuid_cmp(gatt_service->uuid, BT_UUID_CUSTOM_SERVICE)) {
+		return -ENOTSUP;
+	}
+	LOG_DBG("Getting handles from Custom Auth service.");
+	memset(&custom_auth_c->handles, 0xFF, sizeof(custom_auth_c->handles));
+
+	/* LED Characteristic */
+	gatt_chrc = bt_gatt_dm_char_by_uuid(dm, BT_UUID_CUSTOM_LED);
+	if (!gatt_chrc) {
+		LOG_ERR("Missing LED Write characteristic.");
+		return -EINVAL;
+	}
+	/* LED */
+	gatt_desc = bt_gatt_dm_desc_by_uuid(dm, gatt_chrc, BT_UUID_CUSTOM_LED);
+	if (!gatt_desc) {
+		LOG_ERR("Missing LED Write value descriptor in characteristic.");
+		return -EINVAL;
+	}
+	LOG_DBG("Found handle for LED Write characteristic = 0x%x.",  gatt_desc->handle);
+	custom_auth_c->handles.led = gatt_desc->handle;
+
+	/* Assign connection instance. */
+	custom_auth_c->conn = bt_gatt_dm_conn_get(dm);
+	return 0;
+}
+
+static void discovery_completed_cb(struct bt_gatt_dm *dm,
+				   void *context)
+{
+	int err;
+
+	printk("The discovery procedure succeeded\n");
+
+	bt_gatt_dm_data_print(dm);
+
+	err = bt_custom_auth_handles_assign(dm, &custom_auth);
+	if (err) {
+		printk("Could not init client object, error: %d\n", err);
+	}
+
+	err = bt_gatt_dm_data_release(dm);
+	if (err) {
+		printk("Could not release the discovery data, error "
+		       "code: %d\n", err);
+	}
+}
+
+static void discovery_service_not_found_cb(struct bt_conn *conn,
+					   void *context)
+{
+	printk("The service could not be found during the discovery\n");
+}
+
+static void discovery_error_found_cb(struct bt_conn *conn,
+				     int err,
+				     void *context)
+{
+	printk("The discovery procedure failed with %d\n", err);
+}
+
+static const struct bt_gatt_dm_cb discovery_cb = {
+	.completed = discovery_completed_cb,
+	.service_not_found = discovery_service_not_found_cb,
+	.error_found = discovery_error_found_cb,
+};
+
+static void gatt_discover(struct bt_conn *conn)
+{
+	int err;
+
+	LOG_DBG("Running Gatt Discover Function");
+
+	err = bt_gatt_dm_start(conn, BT_UUID_CUSTOM_SERVICE, &discovery_cb, NULL);
+		if (err) {
+			printk("Failed to start discovery (err %d)\n", err);
+		}
+}
 
 static void connected(struct bt_conn *conn, uint8_t conn_err)
 {
@@ -60,7 +193,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 	err = bt_conn_set_security(conn, BT_SECURITY_L4);
 	if (err) {
 		LOG_WRN("Failed to set security: %d", err);
-
+		gatt_discover(conn);
 	}
 
 	err = bt_scan_stop();
@@ -106,7 +239,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 			level, err);
 	}
 
-	//gatt_discover(conn);
+	gatt_discover(conn);
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -227,9 +360,39 @@ static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
 	.pairing_failed = pairing_failed
 };
 
+
+void button_handler(uint32_t button_state, uint32_t has_changed)
+{
+	
+	if (has_changed)
+	{
+		switch (has_changed)
+		{
+			case DK_BTN1_MSK:
+				LOG_INF("Button 1 state = %d.", button_state);
+				bt_custom_auth_set_led(&custom_auth, (uint8_t)button_state);
+				break;
+			case DK_BTN2_MSK:
+				break;
+			case DK_BTN3_MSK:
+				break;
+			case DK_BTN4_MSK:
+				break;
+			default:
+				break;
+		}
+    
+    }
+}
+
 void main(void)
 {
 	int err;
+
+	err = dk_buttons_init(button_handler);
+    if (err) {
+        LOG_ERR("'Co'uldn't init buttons (err %d)", err);
+    }
 
 	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
 	if (err) {
