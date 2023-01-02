@@ -28,6 +28,15 @@
 #define LOG_MODULE_NAME ble_scanner
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
+enum {
+	NUS_C_INITIALIZED,
+	NUS_C_BUTTOM_NOTIF_ENABLED,
+	NUS_C_RX_WRITE_PENDING
+};
+
+#define CHRC_STATUS_LED         DK_LED1
+#define CON_STATUS_LED			DK_LED2
+
 #define FIXED_PASSWORD 123456
 
 static struct bt_conn *default_conn;
@@ -40,7 +49,7 @@ static void write_cb(struct bt_conn *conn, uint8_t err,
 
 	struct bt_custom_auth *custom_auth_c;
 
-	/* Retrieve NUS Client module context. */
+	/* Retrieve module context. */
 	custom_auth_c = CONTAINER_OF(params, struct bt_custom_auth, write_params);
 
     if (err) {
@@ -92,13 +101,13 @@ int bt_custom_auth_handles_assign(struct bt_gatt_dm *dm,
 	LOG_DBG("Getting handles from Custom Auth service.");
 	memset(&custom_auth_c->handles, 0xFF, sizeof(custom_auth_c->handles));
 
-	/* LED Characteristic */
+
+	/* Get Led (WRITE) Chatacteristic */
 	gatt_chrc = bt_gatt_dm_char_by_uuid(dm, BT_UUID_CUSTOM_LED);
 	if (!gatt_chrc) {
 		LOG_ERR("Missing LED Write characteristic.");
 		return -EINVAL;
 	}
-	/* LED */
 	gatt_desc = bt_gatt_dm_desc_by_uuid(dm, gatt_chrc, BT_UUID_CUSTOM_LED);
 	if (!gatt_desc) {
 		LOG_ERR("Missing LED Write value descriptor in characteristic.");
@@ -107,10 +116,99 @@ int bt_custom_auth_handles_assign(struct bt_gatt_dm *dm,
 	LOG_DBG("Found handle for LED Write characteristic = 0x%x.",  gatt_desc->handle);
 	custom_auth_c->handles.led = gatt_desc->handle;
 
+
+	/* Get Button (READ) Characterstic and CCC*/
+	gatt_chrc = bt_gatt_dm_char_by_uuid(dm, BT_UUID_BUTTON_CHRC);
+	if (!gatt_chrc) {
+		LOG_ERR("Missing Button Read characteristic.");
+		return -EINVAL;
+	}
+	gatt_desc = bt_gatt_dm_desc_by_uuid(dm, gatt_chrc, BT_UUID_BUTTON_CHRC);
+	if (!gatt_desc) {
+		LOG_ERR("Missing Button Read value descriptor in characteristic.");
+		return -EINVAL;
+	}
+	LOG_DBG("Found handle for BUTTON Read characteristic.");
+	custom_auth_c->handles.button = gatt_desc->handle;
+	/* NUS TX CCC */
+	gatt_desc = bt_gatt_dm_desc_by_uuid(dm, gatt_chrc, BT_UUID_GATT_CCC);
+	if (!gatt_desc) {
+		LOG_ERR("Missing Button Read CCC in characteristic.");
+		return -EINVAL;
+	}
+	LOG_DBG("Found handle for CCC of BUTTON Read characteristic.");
+	custom_auth_c->handles.button_ccc = gatt_desc->handle;
+
+
 	/* Assign connection instance. */
 	custom_auth_c->conn = bt_gatt_dm_conn_get(dm);
 	return 0;
 }
+
+static uint8_t on_received(struct bt_conn *conn,
+			struct bt_gatt_subscribe_params *params,
+			const void *data, uint16_t length)
+{
+	struct bt_custom_auth *custom_auth;
+
+	/* Retrieve NUS Client module context. */
+	custom_auth = CONTAINER_OF(params, struct bt_custom_auth, button_notif_params);
+
+	if (!data) {
+		LOG_DBG("[UNSUBSCRIBED]");
+		params->value_handle = 0;
+		atomic_clear_bit(&custom_auth->state, NUS_C_BUTTOM_NOTIF_ENABLED);
+		if (custom_auth->cb.unsubscribed) {
+			custom_auth->cb.unsubscribed(custom_auth);
+		}
+		return BT_GATT_ITER_STOP;
+	}
+
+	uint8_t value = *((uint8_t*)data);
+	LOG_DBG("[NOTIFICATION] data %p length %u value %d", data, length, value);
+		if (value == 0x01) {
+        LOG_DBG("Received value: 0x01, setting LED on");
+		dk_set_led_on(CHRC_STATUS_LED);
+
+    } else if (value == 0x00) {
+
+        LOG_DBG("Received value: 0x00, setting LED off");
+		dk_set_led_off(CHRC_STATUS_LED);
+	}
+
+	if (custom_auth->cb.received) {
+		return custom_auth->cb.received(custom_auth, data, length);
+	}
+
+	return BT_GATT_ITER_CONTINUE;
+}
+
+int bt_nus_subscribe_receive(struct bt_custom_auth *custom_auth_c)
+{
+	int err;
+
+	if (atomic_test_and_set_bit(&custom_auth_c->state, NUS_C_BUTTOM_NOTIF_ENABLED)) {
+		return -EALREADY;
+	}
+
+	custom_auth_c->button_notif_params.notify = on_received;
+	custom_auth_c->button_notif_params.value = BT_GATT_CCC_NOTIFY;
+	custom_auth_c->button_notif_params.value_handle = custom_auth_c->handles.button;
+	custom_auth_c->button_notif_params.ccc_handle = custom_auth_c->handles.button_ccc;
+	atomic_set_bit(custom_auth_c->button_notif_params.flags,
+		       BT_GATT_SUBSCRIBE_FLAG_VOLATILE);
+
+	err = bt_gatt_subscribe(custom_auth_c->conn, &custom_auth_c->button_notif_params);
+	if (err) {
+		LOG_ERR("Subscribe failed (err %d)", err);
+		atomic_clear_bit(&custom_auth_c->state, NUS_C_BUTTOM_NOTIF_ENABLED);
+	} else {
+		LOG_DBG("[SUBSCRIBED]");
+	}
+
+	return err;
+}
+
 
 static void discovery_completed_cb(struct bt_gatt_dm *dm,
 				   void *context)
@@ -125,6 +223,8 @@ static void discovery_completed_cb(struct bt_gatt_dm *dm,
 	if (err) {
 		printk("Could not init client object, error: %d\n", err);
 	}
+
+	bt_nus_subscribe_receive(&custom_auth);
 
 	err = bt_gatt_dm_data_release(dm);
 	if (err) {
@@ -200,6 +300,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 	if ((!err) && (err != -EALREADY)) {
 		LOG_ERR("Stop LE scan failed (err %d)", err);
 	}
+	dk_set_led_on(CON_STATUS_LED);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -223,6 +324,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		LOG_ERR("Scanning failed to start (err %d)",
 			err);
 	}
+	dk_set_led_off(CON_STATUS_LED);
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
@@ -388,6 +490,12 @@ void button_handler(uint32_t button_state, uint32_t has_changed)
 void main(void)
 {
 	int err;
+
+	err = dk_leds_init();
+	if (err) {
+		LOG_ERR("LEDs init failed (err %d)", err);
+		return;
+	}
 
 	err = dk_buttons_init(button_handler);
     if (err) {
