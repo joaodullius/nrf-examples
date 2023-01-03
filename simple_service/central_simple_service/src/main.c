@@ -23,6 +23,8 @@
 #include <bluetooth/gatt_dm.h>
 #include <bluetooth/scan.h>
 
+#include <zephyr/settings/settings.h>
+
 #include <zephyr/logging/log.h>
 
 #define LOG_MODULE_NAME ble_scanner
@@ -162,12 +164,13 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 
 	if (!err) {
 		LOG_WRN("Security changed: %s level %u", addr, level);
+		gatt_discover(conn);
 	} else {
 		LOG_ERR("Security failed: %s level %u err %d", addr,
 			level, err);
 	}
 
-	gatt_discover(conn);
+	
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -288,8 +291,6 @@ static void auth_passkey_entry(struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
-	default_conn = bt_conn_ref(conn);
-
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
     // Check for passkey entry event
@@ -402,6 +403,10 @@ void main(void)
 	}
 
 	LOG_INF("Bluetooth initialized");
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+	}
 
 	simple_service_client_init();
 	scan_init();

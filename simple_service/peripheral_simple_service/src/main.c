@@ -16,6 +16,8 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
 
+#include <zephyr/settings/settings.h>
+
 static uint8_t button_value = 0;
 
 static bool   notify_enabled;
@@ -336,6 +338,10 @@ void main(void)
 		return;
 	}
 	LOG_INF("Bluetooth initialized");
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+	}
 
 	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd,
 			      ARRAY_SIZE(sd));
