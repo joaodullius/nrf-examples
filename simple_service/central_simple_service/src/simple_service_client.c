@@ -217,8 +217,3 @@ int bt_simple_service_set_led(struct bt_simple_service *simple_service_c, const 
 	return err;
 
 }
-
-bool bt_hogp_assign_check(const struct bt_simple_service *simple_service_c)
-{
-	return simple_service_c->conn != NULL;
-}
