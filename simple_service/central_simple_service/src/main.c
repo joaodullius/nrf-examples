@@ -23,6 +23,8 @@
 #include <bluetooth/gatt_dm.h>
 #include <bluetooth/scan.h>
 
+#include <zephyr/settings/settings.h>
+
 #include <zephyr/logging/log.h>
 
 #define LOG_MODULE_NAME ble_scanner
@@ -34,6 +36,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 #define FIXED_PASSWORD 123456
 
 static struct bt_conn *default_conn;
+static struct bt_conn *auth_conn;
 static struct bt_simple_service simple_service;
 
 static void discovery_completed_cb(struct bt_gatt_dm *dm,
@@ -136,6 +139,11 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
+	if (auth_conn) {
+		bt_conn_unref(auth_conn);
+		auth_conn = NULL;
+	}
+
 	LOG_INF("Disconnected: %s (reason %u)", addr, reason);
 
 	if (default_conn != conn) {
@@ -162,12 +170,13 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 
 	if (!err) {
 		LOG_WRN("Security changed: %s level %u", addr, level);
+		gatt_discover(conn);
 	} else {
 		LOG_ERR("Security failed: %s level %u err %d", addr,
 			level, err);
 	}
 
-	gatt_discover(conn);
+	
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -288,7 +297,7 @@ static void auth_passkey_entry(struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
-	default_conn = bt_conn_ref(conn);
+	auth_conn = bt_conn_ref(conn);
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
@@ -402,6 +411,10 @@ void main(void)
 	}
 
 	LOG_INF("Bluetooth initialized");
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+	}
 
 	simple_service_client_init();
 	scan_init();
