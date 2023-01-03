@@ -162,12 +162,13 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 
 	if (!err) {
 		LOG_WRN("Security changed: %s level %u", addr, level);
+		gatt_discover(conn);
 	} else {
 		LOG_ERR("Security failed: %s level %u err %d", addr,
 			level, err);
 	}
 
-	gatt_discover(conn);
+	
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -287,8 +288,6 @@ static int scan_init(void)
 static void auth_passkey_entry(struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
-
-	default_conn = bt_conn_ref(conn);
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
