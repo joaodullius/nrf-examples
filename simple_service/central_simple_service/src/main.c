@@ -23,6 +23,8 @@
 #include <bluetooth/gatt_dm.h>
 #include <bluetooth/scan.h>
 
+#include <zephyr/settings/settings.h>
+
 #include <zephyr/logging/log.h>
 
 #define LOG_MODULE_NAME ble_scanner
@@ -401,6 +403,10 @@ void main(void)
 	}
 
 	LOG_INF("Bluetooth initialized");
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+	}
 
 	simple_service_client_init();
 	scan_init();
