@@ -1,5 +1,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/sys/util.h>
 #include <nrfx_rtc.h>
 #include <nrfx_timer.h>
 
@@ -7,6 +8,8 @@
 #define CC_CHANNEL 0
 #define RTC_TIMEOUT_MS 5000
 #define RTC_PRESCALER_MS 125
+BUILD_ASSERT(RTC_PRESCALER_MS <= 125, "VALUE_MS must be less than or equal to 125");
+
 
 static nrfx_rtc_t rtc = NRFX_RTC_INSTANCE(RTC_INSTANCE);
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
@@ -30,7 +33,10 @@ void main(void)
     printk("Hello World!\n");
 
     nrfx_rtc_config_t config = NRFX_RTC_DEFAULT_CONFIG;
+	printk("RTC_PRESCALER_MS: %d\n", RTC_PRESCALER_MS);
+	printk("RTC prescaler in Hz: %d\n", 1000 / RTC_PRESCALER_MS);
 	config.prescaler = RTC_FREQ_TO_PRESCALER(1000 / RTC_PRESCALER_MS);
+	printk("RTC prescaler: %d\n", config.prescaler);
 	
     nrfx_rtc_init(&rtc, &config, rtc_event_handler);
 
@@ -51,4 +57,6 @@ void main(void)
     nrfx_rtc_counter_clear(&rtc);
     nrfx_rtc_enable(&rtc);
     nrfx_rtc_cc_set(&rtc, CC_CHANNEL, RTC_TIMEOUT_MS / RTC_PRESCALER_MS, true);
+	printk("RTC Compare value: %d\n", RTC_TIMEOUT_MS / RTC_PRESCALER_MS);
+	
 }
