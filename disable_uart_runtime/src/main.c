@@ -7,11 +7,10 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/pm/device.h>
-#include <zephyr/logging/log_ctrl.h>
 
 void main(void)
 {
-	const struct device *uart_dev = DEVICE_DT_GET(DT_NODELABEL(uart0));
+	const struct device *uart_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
 	printk("Hello World! %s\n", CONFIG_BOARD);
 
 	if (!device_is_ready(uart_dev)) {
