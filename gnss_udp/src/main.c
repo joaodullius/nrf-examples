@@ -23,8 +23,17 @@ static const struct gpio_dt_spec buttons[] = {
 						{0})};
 static struct gpio_callback button_cb_data[4];
 
-static int client_fd;
-static struct sockaddr_storage host_addr;
+#define SERVER_HOSTNAME "nordicecho.westeurope.cloudapp.azure.com"
+#define SERVER_PORT "2444"
+
+#define MESSAGE_SIZE 256 
+#define MESSAGE_TO_SEND "Hello from GNSS UDP"
+#define SSTRLEN(s) (sizeof(s) - 1)
+
+static uint8_t recv_buf[MESSAGE_SIZE];
+
+static int sock;
+static struct sockaddr_storage server;
 static struct k_work_delayable server_transmission_work;
 
 static volatile enum state_type { LTE_STATE_ON,
@@ -76,43 +85,71 @@ void button_init(void)
 	}
 }
 
-static void server_disconnect(void)
+static int server_resolve(void)
 {
-	(void)close(client_fd);
-}
+	/* STEP 6.1 - Call getaddrinfo() to get the IP address of the echo server */
+	int err;
+	struct addrinfo *result;
+	struct addrinfo hints = {
+		.ai_family = AF_INET,
+		.ai_socktype = SOCK_DGRAM
+	};
+	
+	err = getaddrinfo(SERVER_HOSTNAME, SERVER_PORT, &hints, &result);
+	if (err != 0) {
+		LOG_INF("ERROR: getaddrinfo failed %d", err);
+		return -EIO;
+	}
 
-static int server_init(void)
-{
-	struct sockaddr_in *server4 = ((struct sockaddr_in *)&host_addr);
+	if (result == NULL) {
+		LOG_INF("ERROR: Address not found");
+		return -ENOENT;
+	} 	
 
+	/* STEP 6.2 - Retrieve the relevant information from the result structure*/
+	struct sockaddr_in *server4 = ((struct sockaddr_in *)&server);
+
+	server4->sin_addr.s_addr =
+		((struct sockaddr_in *)result->ai_addr)->sin_addr.s_addr;
 	server4->sin_family = AF_INET;
-	server4->sin_port = htons(CONFIG_UDP_SERVER_PORT);
-
-	inet_pton(AF_INET, CONFIG_UDP_SERVER_ADDRESS_STATIC,
-			  &server4->sin_addr);
+	server4->sin_port = ((struct sockaddr_in *)result->ai_addr)->sin_port;
+	
+	/* STEP 6.3 - Convert the address into a string and print it */
+	char ipv4_addr[NET_IPV4_ADDR_LEN];
+	inet_ntop(AF_INET, &server4->sin_addr.s_addr, ipv4_addr,
+		  sizeof(ipv4_addr));
+	LOG_INF("IPv4 Address found %s", ipv4_addr);
+	
+	/* STEP 6.4 - Free the memory allocated for result */
+	freeaddrinfo(result);
 
 	return 0;
 }
 
+static void server_disconnect(void)
+{
+	(void)close(sock);
+}
 static int server_connect(void)
 {
 	int err;
 
-	client_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (client_fd < 0)
+	sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sock < 0)
 	{
 		LOG_ERR("Failed to create UDP socket: %d", errno);
 		err = -errno;
 		goto error;
 	}
 
-	err = connect(client_fd, (struct sockaddr *)&host_addr,
+	err = connect(sock, (struct sockaddr *)&server,
 				  sizeof(struct sockaddr_in));
 	if (err < 0)
 	{
 		LOG_ERR("Connect failed : %d", errno);
 		goto error;
 	}
+	LOG_INF("Connected to %s", SERVER_HOSTNAME);
 
 	return 0;
 
@@ -182,14 +219,23 @@ static int configure_low_power(void)
 {
 	int err;
 	/** Power Saving Mode */
+#ifdef CONFIG_UDP_PSM_ENABLE
 	err = lte_lc_psm_req(true);
+#else
+	err = lte_lc_psm_req(false);
+#endif /* CONFIG_UDP_PSM_ENABLE */
 	if (err)
-	{
-		LOG_ERR("lte_lc_psm_req, error: %d", err);
-	}
-
+		{
+			LOG_ERR("lte_lc_psm_req, error: %d", err);
+		}
+	
+	
 	/** Release Assistance Indication  */
+#ifdef CONFIG_UDP_RAI_ENABLE
 	err = lte_lc_rai_req(true);
+#else
+	err = lte_lc_rai_req(false);
+#endif /* CONFIG_UDP_RAI_ENABLE */
 	if (err)
 	{
 		LOG_ERR("lte_lc_rai_req, error: %d", err);
@@ -229,28 +275,34 @@ static void modem_connect(void)
 static void server_transmission_work_fn(struct k_work *work)
 {
 	int err;
-	char buffer[CONFIG_UDP_DATA_UPLOAD_SIZE_BYTES] = {"\0"};
 
-	server_connect();
+	//server_connect();
+	if (sock < 0)
+	{
+		LOG_ERR("Socket not connected");
+		return;
+	}
 	LOG_INF("Transmitting UDP/IP payload of %d bytes to the ",
 		   CONFIG_UDP_DATA_UPLOAD_SIZE_BYTES + UDP_IP_HEADER_SIZE);
 	LOG_INF("IP address %s, port number %d",
 		   CONFIG_UDP_SERVER_ADDRESS_STATIC,
 		   CONFIG_UDP_SERVER_PORT);
 
-	err = setsockopt(client_fd, SOL_SOCKET, SO_RAI_LAST , NULL, 0);
+#ifdef CONFIG_UDP_RAI_ENABLE
+	err = setsockopt(sock, SOL_SOCKET, SO_RAI_LAST , NULL, 0);
 	if (err < 0) {
 		LOG_ERR("Failed to set socket options, %d", errno);
 		return;	
 	}
+#endif
 
-	err = send(client_fd, buffer, sizeof(buffer), 0);
+	err =  send(sock, MESSAGE_TO_SEND, SSTRLEN(MESSAGE_TO_SEND), 0);
 	if (err < 0)
 	{
 		LOG_ERR("Failed to transmit UDP packet, %d", err);
 		return;
 	}
-	server_disconnect();
+	//server_disconnect();
 }
 
 static void work_init(void)
@@ -263,6 +315,7 @@ static void work_init(void)
 void main(void)
 {
 	int err;
+	int received;
 	LOG_INF("UDP sample has started");
 
 	button_init();
@@ -288,13 +341,35 @@ void main(void)
 		LOG_WRN("lte_set_connection BUSY!");
 		k_sleep(K_SECONDS(3));
 	}
-	err = server_init();
-	if (err)
-	{
-		LOG_ERR("Not able to initialize UDP server connection");
+
+	if (server_resolve() != 0) {
+		LOG_INF("Failed to resolve server name");
+		return;
+	}
+	
+	if (server_connect() != 0) {
+		LOG_INF("Failed to initialize client");
 		return;
 	}
 
 	work_init();
-	k_work_schedule(&server_transmission_work, K_NO_WAIT);
+	while (1) {
+			/* STEP 10 - Call recv() to listen to received messages */
+			received = recv(sock, recv_buf, sizeof(recv_buf) - 1, 0);
+
+			if (received < 0) {
+				LOG_ERR("Socket error: %d, exit", errno);
+				break;
+			}
+
+			if (received == 0) {
+				LOG_ERR("Empty datagram");
+				break;
+			}
+
+			recv_buf[received] = 0;
+			LOG_INF("Data received from the server: (%s)", recv_buf);
+			
+		}
+		server_disconnect();
 }
