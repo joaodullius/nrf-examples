@@ -10,6 +10,8 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/net/coap.h>
+#include <zephyr/random/rand32.h>
 
 #define UDP_IP_HEADER_SIZE 28
 
@@ -23,14 +25,9 @@ static const struct gpio_dt_spec buttons[] = {
 						{0})};
 static struct gpio_callback button_cb_data[4];
 
-#define SERVER_HOSTNAME "nordicecho.westeurope.cloudapp.azure.com"
-#define SERVER_PORT "2444"
-
 #define MESSAGE_SIZE 256 
 #define MESSAGE_TO_SEND "Hello from GNSS UDP"
 #define SSTRLEN(s) (sizeof(s) - 1)
-
-static uint8_t recv_buf[MESSAGE_SIZE];
 
 static int sock;
 static struct sockaddr_storage server;
@@ -40,6 +37,15 @@ static volatile enum state_type { LTE_STATE_ON,
 								  LTE_STATE_OFFLINE,
 								  LTE_STATE_BUSY } LTE_Connection_Current_State;
 static volatile enum state_type LTE_Connection_Target_State;
+
+//CoAP Definitions
+static uint16_t next_token;
+#define APP_COAP_VERSION 1
+#define APP_COAP_MAX_MSG_LEN 1280
+static uint8_t coap_buf[APP_COAP_MAX_MSG_LEN];
+#define CONFIG_COAP_SERVER_HOSTNAME "californium.eclipseprojects.io"
+#define CONFIG_COAP_SERVER_PORT 5683
+#define CONFIG_COAP_TX_RESOURCE "large-update"
 
 void button_pressed(const struct device *dev, struct gpio_callback *cb,
 					uint32_t pins)
@@ -94,33 +100,32 @@ static int server_resolve(void)
 		.ai_family = AF_INET,
 		.ai_socktype = SOCK_DGRAM
 	};
-	
-	err = getaddrinfo(SERVER_HOSTNAME, SERVER_PORT, &hints, &result);
+	char ipv4_addr[NET_IPV4_ADDR_LEN];
+
+	err = getaddrinfo(CONFIG_COAP_SERVER_HOSTNAME, NULL, &hints, &result);
 	if (err != 0) {
-		LOG_INF("ERROR: getaddrinfo failed %d", err);
+		LOG_ERR("ERROR: getaddrinfo failed %d\n", err);
 		return -EIO;
 	}
 
 	if (result == NULL) {
-		LOG_INF("ERROR: Address not found");
+		LOG_ERR("ERROR: Address not found\n");
 		return -ENOENT;
-	} 	
+	}
 
-	/* STEP 6.2 - Retrieve the relevant information from the result structure*/
+	/* IPv4 Address. */
 	struct sockaddr_in *server4 = ((struct sockaddr_in *)&server);
 
 	server4->sin_addr.s_addr =
 		((struct sockaddr_in *)result->ai_addr)->sin_addr.s_addr;
 	server4->sin_family = AF_INET;
-	server4->sin_port = ((struct sockaddr_in *)result->ai_addr)->sin_port;
-	
-	/* STEP 6.3 - Convert the address into a string and print it */
-	char ipv4_addr[NET_IPV4_ADDR_LEN];
+	server4->sin_port = htons(CONFIG_COAP_SERVER_PORT);
+
 	inet_ntop(AF_INET, &server4->sin_addr.s_addr, ipv4_addr,
 		  sizeof(ipv4_addr));
-	LOG_INF("IPv4 Address found %s", ipv4_addr);
-	
-	/* STEP 6.4 - Free the memory allocated for result */
+	LOG_INF("IPv4 Address found %s\n", ipv4_addr);
+
+	/* Free the address. */
 	freeaddrinfo(result);
 
 	return 0;
@@ -149,7 +154,9 @@ static int server_connect(void)
 		LOG_ERR("Connect failed : %d", errno);
 		goto error;
 	}
-	LOG_INF("Connected to %s", SERVER_HOSTNAME);
+	LOG_INF("Connected to %s", CONFIG_COAP_SERVER_HOSTNAME);
+
+	next_token = sys_rand32_get();
 
 	return 0;
 
@@ -275,18 +282,60 @@ static void modem_connect(void)
 static void server_transmission_work_fn(struct k_work *work)
 {
 	int err;
-
-	//server_connect();
+	struct coap_packet request;
 	if (sock < 0)
 	{
 		LOG_ERR("Socket not connected");
 		return;
 	}
-	LOG_INF("Transmitting UDP/IP payload of %d bytes to the ",
-		   CONFIG_UDP_DATA_UPLOAD_SIZE_BYTES + UDP_IP_HEADER_SIZE);
-	LOG_INF("IP address %s, port number %d",
-		   CONFIG_UDP_SERVER_ADDRESS_STATIC,
-		   CONFIG_UDP_SERVER_PORT);
+	
+	next_token++;
+
+	/* STEP 8.1 - Initialize the CoAP packet and append the resource path */ 
+	err = coap_packet_init(&request, coap_buf, sizeof(coap_buf),
+			       APP_COAP_VERSION, COAP_TYPE_NON_CON,
+			       sizeof(next_token), (uint8_t *)&next_token,
+			       COAP_METHOD_PUT, coap_next_id());
+	if (err < 0) {
+		LOG_ERR("Failed to create CoAP request, %d\n", err);
+		return;
+	}
+
+	err = coap_packet_append_option(&request, COAP_OPTION_URI_PATH,
+					(uint8_t *)CONFIG_COAP_TX_RESOURCE,
+					strlen(CONFIG_COAP_TX_RESOURCE));
+	if (err < 0) {
+		LOG_ERR("Failed to encode CoAP option, %d\n", err);
+		return;
+	}
+
+	/* STEP 8.2 - Append the content format as plain text */
+	const uint8_t text_plain = COAP_CONTENT_FORMAT_TEXT_PLAIN;
+	err = coap_packet_append_option(&request, COAP_OPTION_CONTENT_FORMAT,
+					&text_plain,
+					sizeof(text_plain));
+	if (err < 0) {
+		LOG_ERR("Failed to encode CoAP option, %d\n", err);
+		return;
+	}
+
+	/* STEP 8.3 - Add the payload to the message */
+	err = coap_packet_append_payload_marker(&request);
+	if (err < 0) {
+		LOG_ERR("Failed to append payload marker, %d\n", err);
+		return;
+	}
+
+
+    char buffer[sizeof(MESSAGE_TO_SEND) + 8];
+    sprintf(buffer, "%s - %04X%c", MESSAGE_TO_SEND, next_token, '\0');
+	LOG_HEXDUMP_INF(buffer, sizeof(buffer), "Payload");
+	err = coap_packet_append_payload(&request, (uint8_t *)buffer, sizeof(buffer));
+	if (err < 0) {
+		LOG_ERR("Failed to append payload, %d\n", err);
+		return;
+	}
+
 
 #ifdef CONFIG_UDP_RAI_ENABLE
 	err = setsockopt(sock, SOL_SOCKET, SO_RAI_LAST , NULL, 0);
@@ -296,7 +345,7 @@ static void server_transmission_work_fn(struct k_work *work)
 	}
 #endif
 
-	err =  send(sock, MESSAGE_TO_SEND, SSTRLEN(MESSAGE_TO_SEND), 0);
+	err =  send(sock, request.data, request.offset, 0);
 	if (err < 0)
 	{
 		LOG_ERR("Failed to transmit UDP packet, %d", err);
@@ -310,6 +359,46 @@ static void work_init(void)
 
 	k_work_init_delayable(&server_transmission_work,
 						  server_transmission_work_fn);
+}
+
+static int client_handle_response(uint8_t *buf, int received)
+{
+	struct coap_packet reply;
+	uint8_t token[8];
+	uint16_t token_len;
+	const uint8_t *payload;
+	uint16_t payload_len;
+	uint8_t temp_buf[128];
+	/* STEP 9.1 - Parse the received CoAP packet */
+	int err = coap_packet_parse(&reply, buf, received, NULL, 0);
+	if (err < 0) {
+		LOG_ERR("Malformed response received: %d\n", err);
+		return err;
+	}
+
+	/* STEP 9.2 - Confirm the token in the response matches the token sent */
+	token_len = coap_header_get_token(&reply, token);
+	if ((token_len != sizeof(next_token)) ||
+	    (memcmp(&next_token, token, sizeof(next_token)) != 0)) {
+		LOG_ERR("Invalid token received: 0x%02x%02x\n",
+		       token[1], token[0]);
+		return 0;
+	}
+
+	/* STEP 9.3 - Retrieve the payload and confirm it's nonzero */
+	payload = coap_packet_get_payload(&reply, &payload_len);
+
+	if (payload_len > 0) {
+		snprintf(temp_buf, MIN(payload_len + 1, sizeof(temp_buf)), "%s", payload);
+	} else {
+		strcpy(temp_buf, "EMPTY");
+	}
+
+	/* STEP 9.4 - Log the header code, token and payload of the response */
+	LOG_INF("CoAP response: Code 0x%x, Token 0x%02x%02x, Payload: %s\n",
+	       coap_header_get_code(&reply), token[1], token[0], (char *)temp_buf);
+
+	return 0;
 }
 
 void main(void)
@@ -354,22 +443,25 @@ void main(void)
 
 	work_init();
 	while (1) {
-			/* STEP 10 - Call recv() to listen to received messages */
-			received = recv(sock, recv_buf, sizeof(recv_buf) - 1, 0);
+		received = recv(sock, coap_buf, sizeof(coap_buf), 0);
 
-			if (received < 0) {
-				LOG_ERR("Socket error: %d, exit", errno);
-				break;
-			}
-
-			if (received == 0) {
-				LOG_ERR("Empty datagram");
-				break;
-			}
-
-			recv_buf[received] = 0;
-			LOG_INF("Data received from the server: (%s)", recv_buf);
-			
+		if (received < 0) {
+			LOG_ERR("Socket error: %d, exit\n", errno);
+			break;
 		}
+		
+		if (received == 0) {
+			LOG_INF("Empty datagram\n");
+			continue;
+		}
+
+		/* STEP 12 - Parse the received CoAP packet */
+		err = client_handle_response(coap_buf, received);
+		if (err < 0) {
+			LOG_ERR("Invalid response, exit\n");
+			break;
+		
 		server_disconnect();
+		}
+	}
 }
