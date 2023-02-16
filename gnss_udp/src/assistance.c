@@ -19,7 +19,7 @@
 
 #include "assistance.h"
 
-LOG_MODULE_DECLARE(gnss_sample, CONFIG_GNSS_SAMPLE_LOG_LEVEL);
+LOG_MODULE_DECLARE(gnss_udp, CONFIG_GNSS_SAMPLE_LOG_LEVEL);
 
 static char jwt_buf[600];
 static char rx_buf[2048];

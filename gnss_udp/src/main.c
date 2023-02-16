@@ -13,6 +13,8 @@
 
 #define UDP_IP_HEADER_SIZE 28
 
+LOG_MODULE_REGISTER(gnss_udp, LOG_LEVEL_INF);
+
 /*
  * Get button configuration from the devicetree sw0 alias. This is mandatory.
  */
@@ -43,12 +45,12 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
 {
 	int val;
 
-	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
+	LOG_INF("Button pressed at %" PRIu32, k_cycle_get_32());
 
 	val = gpio_pin_get_dt(&buttons[0]);
 	if (val == 1 && LTE_Connection_Current_State == LTE_STATE_ON) // button1 pressed
 	{
-		printk("Send UDP package!\n");
+		LOG_INF("Send UDP package!");
 		k_work_reschedule(&server_transmission_work, K_NO_WAIT);
 	}
 
@@ -62,7 +64,7 @@ void button_init(void)
 		ret = gpio_pin_configure_dt(&buttons[i], GPIO_INPUT);
 		if (ret != 0)
 		{
-			printk("Error %d: failed to configure %s pin %d\n",
+			LOG_ERR("Error %d: failed to configure %s pin %d",
 				   ret, buttons[i].port->name, buttons[i].pin);
 			return;
 		}
@@ -71,14 +73,14 @@ void button_init(void)
 											  GPIO_INT_EDGE_TO_ACTIVE);
 		if (ret != 0)
 		{
-			printk("Error %d: failed to configure interrupt on %s pin %d\n",
+			LOG_ERR("Error %d: failed to configure interrupt on %s pin %d",
 				   ret, buttons[i].port->name, buttons[i].pin);
 			return;
 		}
 
 		gpio_init_callback(&button_cb_data[i], button_pressed, BIT(buttons[i].pin));
 		gpio_add_callback(buttons[i].port, &button_cb_data[i]);
-		printk("Set up button at %s pin %d\n", buttons[i].port->name, buttons[i].pin);
+		LOG_INF("Set up button at %s pin %d", buttons[i].port->name, buttons[i].pin);
 	}
 }
 
@@ -107,7 +109,7 @@ static int server_connect(void)
 	client_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (client_fd < 0)
 	{
-		printk("Failed to create UDP socket: %d\n", errno);
+		LOG_ERR("Failed to create UDP socket: %d", errno);
 		err = -errno;
 		goto error;
 	}
@@ -116,7 +118,7 @@ static int server_connect(void)
 				  sizeof(struct sockaddr_in));
 	if (err < 0)
 	{
-		printk("Connect failed : %d\n", errno);
+		LOG_ERR("Connect failed : %d", errno);
 		goto error;
 	}
 
@@ -134,7 +136,7 @@ static void lte_handler(const struct lte_lc_evt *const evt)
 	switch (evt->type)
 	{
 	case LTE_LC_EVT_NW_REG_STATUS:
-		printk("Network registration status: %d\n",
+		LOG_INF("Network registration status: %d",
 			   evt->nw_reg_status);
 
 		if ((evt->nw_reg_status != LTE_LC_NW_REG_REGISTERED_HOME) &&
@@ -143,18 +145,18 @@ static void lte_handler(const struct lte_lc_evt *const evt)
 			if (evt->nw_reg_status == 0)
 			{
 				LTE_Connection_Current_State = LTE_STATE_OFFLINE;
-				printk("LTE OFFLINE!\n");
+				LOG_ERR("LTE OFFLINE!");
 				break;
 			}
 			break;
 		}
 
-		printk("Network registration status: %s\n",
-			   evt->nw_reg_status == LTE_LC_NW_REG_REGISTERED_HOME ? "Connected - home network" : "Connected - roaming\n");
+		LOG_INF("Network registration status: %s",
+			   evt->nw_reg_status == LTE_LC_NW_REG_REGISTERED_HOME ? "Connected - home network" : "Connected - roaming");
 		LTE_Connection_Current_State = LTE_STATE_ON;
 		break;
 	case LTE_LC_EVT_PSM_UPDATE:
-		printk("PSM parameter update: TAU: %d, Active time: %d\n",
+		LOG_INF("PSM parameter update: TAU: %d, Active time: %d",
 			   evt->psm_cfg.tau, evt->psm_cfg.active_time);
 		break;
 	case LTE_LC_EVT_EDRX_UPDATE:
@@ -163,20 +165,20 @@ static void lte_handler(const struct lte_lc_evt *const evt)
 		ssize_t len;
 
 		len = snprintf(log_buf, sizeof(log_buf),
-					   "eDRX parameter update: eDRX: %f, PTW: %f\n",
+					   "eDRX parameter update: eDRX: %f, PTW: %f",
 					   evt->edrx_cfg.edrx, evt->edrx_cfg.ptw);
 		if (len > 0)
 		{
-			printk("%s\n", log_buf);
+			LOG_INF("%s", log_buf);
 		}
 		break;
 	}
 	case LTE_LC_EVT_RRC_UPDATE:
-		printk("RRC mode: %s\n",
-			   evt->rrc_mode == LTE_LC_RRC_MODE_CONNECTED ? "Connected" : "Idle\n");
+		LOG_INF("RRC mode: %s",
+			   evt->rrc_mode == LTE_LC_RRC_MODE_CONNECTED ? "Connected" : "Idle");
 		break;
 	case LTE_LC_EVT_CELL_UPDATE:
-		printk("LTE cell changed: Cell ID: %d, Tracking area: %d\n",
+		LOG_INF("LTE cell changed: Cell ID: %d, Tracking area: %d",
 			   evt->cell.id, evt->cell.tac);
 		break;
 	default:
@@ -191,14 +193,14 @@ static int configure_low_power(void)
 	err = lte_lc_psm_req(true);
 	if (err)
 	{
-		printk("lte_lc_psm_req, error: %d\n", err);
+		LOG_ERR("lte_lc_psm_req, error: %d", err);
 	}
 
 	/** Release Assistance Indication  */
 	err = lte_lc_rai_req(true);
 	if (err)
 	{
-		printk("lte_lc_rai_req, error: %d\n", err);
+		LOG_ERR("lte_lc_rai_req, error: %d", err);
 	}
 
 	return err;
@@ -211,7 +213,7 @@ static void modem_init(void)
 	err = lte_lc_init();
 	if (err)
 	{
-		printk("Modem initialization failed, error: %d\n", err);
+		LOG_ERR("Modem initialization failed, error: %d", err);
 		return;
 	}
 	
@@ -224,7 +226,7 @@ static void modem_connect(void)
 	err = lte_lc_connect_async(lte_handler);
 	if (err)
 	{
-		printk("Connecting to LTE network failed, error: %d\n",
+		LOG_ERR("Connecting to LTE network failed, error: %d",
 				err);
 		return;
 	}
@@ -238,22 +240,22 @@ static void server_transmission_work_fn(struct k_work *work)
 	char buffer[CONFIG_UDP_DATA_UPLOAD_SIZE_BYTES] = {"\0"};
 
 	server_connect();
-	printk("Transmitting UDP/IP payload of %d bytes to the ",
+	LOG_INF("Transmitting UDP/IP payload of %d bytes to the ",
 		   CONFIG_UDP_DATA_UPLOAD_SIZE_BYTES + UDP_IP_HEADER_SIZE);
-	printk("IP address %s, port number %d\n",
+	LOG_INF("IP address %s, port number %d",
 		   CONFIG_UDP_SERVER_ADDRESS_STATIC,
 		   CONFIG_UDP_SERVER_PORT);
 
 	err = setsockopt(client_fd, SOL_SOCKET, SO_RAI_LAST , NULL, 0);
 	if (err < 0) {
-		printk("Failed to set socket options, %d\n", errno);
+		LOG_ERR("Failed to set socket options, %d", errno);
 		return;	
 	}
 
 	err = send(client_fd, buffer, sizeof(buffer), 0);
 	if (err < 0)
 	{
-		printk("Failed to transmit UDP packet, %d\n", err);
+		LOG_ERR("Failed to transmit UDP packet, %d", err);
 		return;
 	}
 	server_disconnect();
@@ -269,7 +271,7 @@ static void work_init(void)
 void main(void)
 {
 	int err;
-	printk("UDP sample has started\n");
+	LOG_INF("UDP sample has started");
 
 	button_init();
 
@@ -284,20 +286,20 @@ void main(void)
 	err = configure_low_power();
 	if (err)
 	{
-		printk("Unable to set low power configuration, error: %d\n",
+		LOG_ERR("Unable to set low power configuration, error: %d",
 			   err);
 	}
 	modem_connect();
 #endif
 	while (LTE_STATE_BUSY == LTE_Connection_Current_State)
 	{
-		printk("lte_set_connection BUSY!\n");
+		LOG_WRN("lte_set_connection BUSY!");
 		k_sleep(K_SECONDS(3));
 	}
 	err = server_init();
 	if (err)
 	{
-		printk("Not able to initialize UDP server connection\n");
+		LOG_ERR("Not able to initialize UDP server connection");
 		return;
 	}
 
