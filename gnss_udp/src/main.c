@@ -15,17 +15,9 @@
 
 LOG_MODULE_REGISTER(gnss_udp, LOG_LEVEL_INF);
 
-/*
- * Get button configuration from the devicetree sw0 alias. This is mandatory.
- */
-#define BT1_NODE DT_ALIAS(sw0)
-#define BT2_NODE DT_ALIAS(sw1)
-#define SW1_NODE DT_ALIAS(sw2)
-#define SW2_NODE DT_ALIAS(sw3)
 
-#if !(DT_NODE_HAS_STATUS(BT1_NODE, okay) && DT_NODE_HAS_STATUS(BT2_NODE, okay) && DT_NODE_HAS_STATUS(SW1_NODE, okay) && DT_NODE_HAS_STATUS(SW2_NODE, okay))
-#error "Unsupported board: button devicetree alias is not defined"
-#endif
+#define BT1_NODE DT_ALIAS(sw0)
+
 static const struct gpio_dt_spec buttons[] = {
 	GPIO_DT_SPEC_GET_OR(BT1_NODE, gpios,
 						{0})};
