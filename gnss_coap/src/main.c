@@ -240,6 +240,15 @@ static int configure_low_power(void)
 	return err;
 }
 
+char* get_timestamp() {
+	static char timestamp[22]; // allocate space for the timestamp
+	int64_t now_ms;
+	date_time_now(&now_ms); // get the current time in milliseconds
+	time_t now = now_ms / 1000; // convert to seconds
+	strftime(timestamp, sizeof(timestamp), "%Y/%m/%d - %H:%M:%S", localtime(&now)); // format the timestamp
+	return timestamp;
+}
+
 static void coap_put_work_fn(struct k_work *work)
 {
 	int err;
@@ -287,10 +296,10 @@ static void coap_put_work_fn(struct k_work *work)
 		return;
 	}
 
-	char buffer[sizeof(MESSAGE_TO_SEND) + 8];
-    sprintf(buffer, "%s - %04X%c", MESSAGE_TO_SEND, next_token, '\0');
-	LOG_HEXDUMP_INF(buffer, sizeof(buffer), "Payload");
-	err = coap_packet_append_payload(&request, (uint8_t *)buffer, sizeof(buffer));
+	char buffer[MESSAGE_SIZE];
+    snprintf(buffer, sizeof(buffer), "%s - %s", get_timestamp(), MESSAGE_TO_SEND);
+	LOG_HEXDUMP_INF(buffer, strlen(buffer), "Payload");
+	err = coap_packet_append_payload(&request, (uint8_t *)buffer, strlen(buffer));
 	if (err < 0) {
 		LOG_ERR("Failed to append payload, %d", err);
 		return;
@@ -495,6 +504,10 @@ void main(void)
 	} else {
 		LOG_INF("Current time got ok");
 	}
+
+ 	
+	LOG_WRN("Current time: %s", get_timestamp()); // print the timestamp
+
 
 	if (server_resolve() != 0) {
 		LOG_INF("Failed to resolve server name");
