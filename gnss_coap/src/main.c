@@ -12,6 +12,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/net/coap.h>
 #include <zephyr/random/rand32.h>
+#include <date_time.h>
 
 #define UDP_IP_HEADER_SIZE 28
 
@@ -50,6 +51,7 @@ static uint8_t coap_buf[APP_COAP_MAX_MSG_LEN];
 
 
 
+static K_SEM_DEFINE(time_sem, 0, 1);
 static int server_resolve(void)
 {
 	/* STEP 6.1 - Call getaddrinfo() to get the IP address of the echo server */
@@ -180,6 +182,28 @@ static void lte_handler(const struct lte_lc_evt *const evt)
 		break;
 	}
 }
+
+static void date_time_evt_handler(const struct date_time_evt *evt)
+{
+	switch (evt->type) {
+	case DATE_TIME_OBTAINED_MODEM:
+		LOG_INF("DATE_TIME_OBTAINED_MODEM");
+		break;
+	case DATE_TIME_OBTAINED_NTP:
+		LOG_INF("DATE_TIME_OBTAINED_NTP");
+		break;
+	case DATE_TIME_OBTAINED_EXT:
+		LOG_INF("DATE_TIME_OBTAINED_EXT");
+		break;
+	case DATE_TIME_NOT_OBTAINED:
+		LOG_INF("DATE_TIME_NOT_OBTAINED");
+		break;
+	default:
+		break;
+	}
+	k_sem_give(&time_sem);
+}
+
 
 static int configure_low_power(void)
 {
@@ -331,6 +355,8 @@ void button_init(void)
 static void modem_init(void)
 {
 	int err;
+	
+	date_time_register_handler(date_time_evt_handler);
 
 	err = lte_lc_init();
 	if (err)
@@ -354,8 +380,6 @@ static void modem_connect(void)
 	}
 
 }
-
-
 
 static int client_handle_response(uint8_t *buf, int received)
 {
@@ -424,6 +448,14 @@ void main(void)
 	{
 		LOG_WRN("lte_set_connection BUSY!");
 		k_sleep(K_SECONDS(3));
+	}
+	
+	date_time_update_async(date_time_evt_handler);
+	k_sem_take(&time_sem,K_MINUTES(10));
+	if (!date_time_is_valid()) {
+		LOG_WRN("Failed to get current time, continuing anyway");
+	} else {
+		LOG_INF("Current time got ok");
 	}
 
 	if (server_resolve() != 0) {
