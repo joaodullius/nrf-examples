@@ -12,12 +12,11 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/net/coap.h>
 #include <zephyr/random/rand32.h>
+#include <nrf_modem_gnss.h>
 #include <date_time.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/pm/device.h>
-
-#define UDP_IP_HEADER_SIZE 28
 
 LOG_MODULE_REGISTER(gnss_udp, LOG_LEVEL_INF);
 
@@ -32,7 +31,7 @@ static const struct gpio_dt_spec buttons[] = {
 						{0})};
 static struct gpio_callback button_cb_data[2];
 
-#define MESSAGE_SIZE 256 
+#define MESSAGE_SIZE 242 
 #define MESSAGE_TO_SEND "Hello from GNSS UDP"
 #define SSTRLEN(s) (sizeof(s) - 1)
 
@@ -53,9 +52,13 @@ static uint8_t coap_buf[APP_COAP_MAX_MSG_LEN];
 #define CONFIG_COAP_SERVER_PORT 5683
 #define CONFIG_COAP_TX_RESOURCE "large-update"
 
-//UART Disable Definitions
-static bool uart_state = true;
+//GPS Definitions
+static uint8_t coap_payload[MESSAGE_SIZE];
+static struct nrf_modem_gnss_pvt_data_frame pvt_data;
+static int64_t gnss_start_time;
+static bool first_fix = false;
 
+static bool uart_state = true;
 
 static K_SEM_DEFINE(time_sem, 0, 1);
 static int server_resolve(void)
@@ -241,11 +244,11 @@ static int configure_low_power(void)
 }
 
 char* get_timestamp() {
-	static char timestamp[22]; // allocate space for the timestamp
+	static char timestamp[28]; // allocate space for the timestamp
 	int64_t now_ms;
 	date_time_now(&now_ms); // get the current time in milliseconds
 	time_t now = now_ms / 1000; // convert to seconds
-	strftime(timestamp, sizeof(timestamp), "%Y/%m/%d - %H:%M:%S", localtime(&now)); // format the timestamp
+	strftime(timestamp, sizeof(timestamp), "%Y/%m/%d - %H:%M:%S (UTC)", localtime(&now)); // format the timestamp
 	return timestamp;
 }
 
@@ -296,10 +299,14 @@ static void coap_put_work_fn(struct k_work *work)
 		return;
 	}
 
-	char buffer[MESSAGE_SIZE];
-    snprintf(buffer, sizeof(buffer), "%s - %s", get_timestamp(), MESSAGE_TO_SEND);
-	LOG_HEXDUMP_INF(buffer, strlen(buffer), "Payload");
-	err = coap_packet_append_payload(&request, (uint8_t *)buffer, strlen(buffer));
+	/*	Using sizeof(coap_payload) to send the full coap_payload(MESSAGE_SIZE)
+			for maximum power measurement. 
+		Change to strlen(coap_payload) to send only the current payload size.
+	*/
+	LOG_INF("Coap Payload: %s", coap_payload);
+	LOG_INF("Coap Payload Size: %d", sizeof(coap_payload));
+	LOG_HEXDUMP_INF(coap_payload, sizeof(coap_payload), "Coap Payload");
+	err = coap_packet_append_payload(&request, (uint8_t *)coap_payload, sizeof(coap_payload));
 	if (err < 0) {
 		LOG_ERR("Failed to append payload, %d", err);
 		return;
@@ -399,6 +406,124 @@ void button_init(void)
 		LOG_INF("Set up button at %s pin %d", buttons[i].port->name, buttons[i].pin);
 	}
 }
+static void new_fix_work_fn(struct k_work *work)
+{
+	LOG_INF("Latitude:       %.06f", pvt_data.latitude);
+	LOG_INF("Longitude:      %.06f", pvt_data.longitude);
+	LOG_INF("Altitude:       %.01f m", pvt_data.altitude);
+	LOG_INF("Time (UTC):     %02u:%02u:%02u.%03u",
+	       pvt_data.datetime.hour,
+	       pvt_data.datetime.minute,
+	       pvt_data.datetime.seconds,
+	       pvt_data.datetime.ms);
+	
+	int err = snprintf(coap_payload, MESSAGE_SIZE, "%s - Latitude: %.06f, Longitude: %.06f", get_timestamp(), pvt_data.latitude, pvt_data.longitude);
+	if (err < 0) {
+		LOG_ERR("Failed to print to buffer: %d", err);
+	}   
+	k_work_submit(&coap_put_work);
+
+}
+K_WORK_DEFINE(new_fix_work, new_fix_work_fn);
+static void gnss_event_handler(int event)
+{
+	int err, num_satellites;
+
+	switch (event) {
+	case NRF_MODEM_GNSS_EVT_PVT:
+		num_satellites = 0;
+		for (int i = 0; i < 12 ; i++) {
+			if (pvt_data.sv[i].signal != 0) {
+				LOG_INF("sv: %d, cn0: %d", pvt_data.sv[i].sv, pvt_data.sv[i].cn0);
+				num_satellites++;
+			}	
+		} 
+		LOG_INF("Searching. Current satellites: %d", num_satellites);		
+		err = nrf_modem_gnss_read(&pvt_data, sizeof(pvt_data), NRF_MODEM_GNSS_DATA_PVT);
+		if (err) {
+			LOG_ERR("nrf_modem_gnss_read failed, err %d", err);
+			return;
+		}
+		if (pvt_data.flags & NRF_MODEM_GNSS_PVT_FLAG_FIX_VALID) {
+			k_work_submit(&new_fix_work);
+			if (!first_fix) {
+				LOG_INF("Time to first fix: %2.1lld s", (k_uptime_get() - gnss_start_time)/1000);
+				first_fix = true;
+			}
+			return;
+		} 
+		/* STEP 5 - Check for the flags indicating GNSS is blocked */		
+		if (pvt_data.flags & NRF_MODEM_GNSS_PVT_FLAG_DEADLINE_MISSED) {
+			LOG_INF("GNSS blocked by LTE activity");
+		} else if (pvt_data.flags & NRF_MODEM_GNSS_PVT_FLAG_NOT_ENOUGH_WINDOW_TIME) {
+			LOG_INF("Insufficient GNSS time windows");
+		}
+		break;
+
+	case NRF_MODEM_GNSS_EVT_PERIODIC_WAKEUP:
+		LOG_INF("GNSS has woken up");
+		break;
+	case NRF_MODEM_GNSS_EVT_SLEEP_AFTER_FIX:
+		LOG_INF("GNSS enter sleep after fix");
+		break;		
+
+	/*
+	case NRF_MODEM_GNSS_EVT_AGPS_REQ:
+		err = nrf_modem_gnss_read(&last_agps,
+					     sizeof(last_agps),
+					     NRF_MODEM_GNSS_DATA_AGPS_REQ);
+		if (err == 0) {
+			k_work_submit_to_queue(&gnss_work_q, &agps_data_get_work);
+		}
+		break;
+	*/	
+
+	default:
+		break;
+	}
+}
+
+
+static int gnss_init_and_start(void)
+{
+
+	int err = snprintf(coap_payload, MESSAGE_SIZE, "No Initial Fix");
+	if (err < 0) {
+		LOG_INF("Error formatting CoAP Payload.");
+	}
+
+	if (lte_lc_func_mode_set(LTE_LC_FUNC_MODE_NORMAL) != 0) {
+		LOG_ERR("Failed to activate GNSS functional mode");
+		return -1;
+	}
+
+	if (nrf_modem_gnss_event_handler_set(gnss_event_handler) != 0) {
+		LOG_ERR("Failed to set GNSS event handler");
+		return -1;
+	}
+
+	if (nrf_modem_gnss_fix_interval_set(CONFIG_GNSS_PERIODIC_INTERVAL) != 0) {
+		LOG_ERR("Failed to set GNSS fix interval");
+		return -1;
+	}
+
+	if (nrf_modem_gnss_fix_retry_set(CONFIG_GNSS_PERIODIC_TIMEOUT) != 0) {
+		LOG_ERR("Failed to set GNSS fix retry");
+		return -1;
+	}
+
+	LOG_INF("Starting GNSS");
+	if (nrf_modem_gnss_start() != 0) {
+		LOG_ERR("Failed to start GNSS");
+		return -1;
+	}
+
+	gnss_start_time = k_uptime_get();
+
+	return 0;
+}
+
+
 static void modem_init(void)
 {
 	int err;
@@ -519,8 +644,15 @@ void main(void)
 		return;
 	}
 
+	
+	if (gnss_init_and_start() != 0) {
+		LOG_ERR("Failed to initialize and start GNSS");
+		return;
+	}
+	
 
 	while (1) {
+		
 		received = recv(sock, coap_buf, sizeof(coap_buf), 0);
 
 		if (received < 0) {
@@ -533,7 +665,6 @@ void main(void)
 			continue;
 		}
 
-		/* STEP 12 - Parse the received CoAP packet */
 		err = client_handle_response(coap_buf, received);
 		if (err < 0) {
 			LOG_ERR("Invalid response, exit");
