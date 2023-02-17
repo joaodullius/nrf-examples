@@ -31,7 +31,6 @@ static struct gpio_callback button_cb_data[4];
 
 static int sock;
 static struct sockaddr_storage server;
-static struct k_work_delayable server_transmission_work;
 
 static volatile enum state_type { LTE_STATE_ON,
 								  LTE_STATE_OFFLINE,
@@ -47,49 +46,9 @@ static uint8_t coap_buf[APP_COAP_MAX_MSG_LEN];
 #define CONFIG_COAP_SERVER_PORT 5683
 #define CONFIG_COAP_TX_RESOURCE "large-update"
 
-void button_pressed(const struct device *dev, struct gpio_callback *cb,
-					uint32_t pins)
-{
-	int val;
 
-	LOG_INF("Button pressed at %" PRIu32, k_cycle_get_32());
 
-	val = gpio_pin_get_dt(&buttons[0]);
-	if (val == 1 && LTE_Connection_Current_State == LTE_STATE_ON) // button1 pressed
-	{
-		LOG_INF("Send UDP package!");
-		k_work_reschedule(&server_transmission_work, K_NO_WAIT);
-	}
 
-}
-
-void button_init(void)
-{
-	int ret;
-	for (size_t i = 0; i < ARRAY_SIZE(buttons); i++)
-	{
-		ret = gpio_pin_configure_dt(&buttons[i], GPIO_INPUT);
-		if (ret != 0)
-		{
-			LOG_ERR("Error %d: failed to configure %s pin %d",
-				   ret, buttons[i].port->name, buttons[i].pin);
-			return;
-		}
-
-		ret = gpio_pin_interrupt_configure_dt(&buttons[i],
-											  GPIO_INT_EDGE_TO_ACTIVE);
-		if (ret != 0)
-		{
-			LOG_ERR("Error %d: failed to configure interrupt on %s pin %d",
-				   ret, buttons[i].port->name, buttons[i].pin);
-			return;
-		}
-
-		gpio_init_callback(&button_cb_data[i], button_pressed, BIT(buttons[i].pin));
-		gpio_add_callback(buttons[i].port, &button_cb_data[i]);
-		LOG_INF("Set up button at %s pin %d", buttons[i].port->name, buttons[i].pin);
-	}
-}
 
 static int server_resolve(void)
 {
@@ -104,12 +63,12 @@ static int server_resolve(void)
 
 	err = getaddrinfo(CONFIG_COAP_SERVER_HOSTNAME, NULL, &hints, &result);
 	if (err != 0) {
-		LOG_ERR("ERROR: getaddrinfo failed %d\n", err);
+		LOG_ERR("ERROR: getaddrinfo failed %d", err);
 		return -EIO;
 	}
 
 	if (result == NULL) {
-		LOG_ERR("ERROR: Address not found\n");
+		LOG_ERR("ERROR: Address not found");
 		return -ENOENT;
 	}
 
@@ -123,7 +82,7 @@ static int server_resolve(void)
 
 	inet_ntop(AF_INET, &server4->sin_addr.s_addr, ipv4_addr,
 		  sizeof(ipv4_addr));
-	LOG_INF("IPv4 Address found %s\n", ipv4_addr);
+	LOG_INF("IPv4 Address found %s", ipv4_addr);
 
 	/* Free the address. */
 	freeaddrinfo(result);
@@ -135,6 +94,7 @@ static void server_disconnect(void)
 {
 	(void)close(sock);
 }
+
 static int server_connect(void)
 {
 	int err;
@@ -166,7 +126,6 @@ error:
 	return err;
 }
 
-#if defined(CONFIG_NRF_MODEM_LIB)
 static void lte_handler(const struct lte_lc_evt *const evt)
 {
 	switch (evt->type)
@@ -251,6 +210,124 @@ static int configure_low_power(void)
 	return err;
 }
 
+static void coap_put_work_fn(struct k_work *work)
+{
+	int err;
+	struct coap_packet request;
+	if (sock < 0)
+	{
+		LOG_ERR("Socket not connected");
+		return;
+	}
+	
+	next_token++;
+
+	/* STEP 8.1 - Initialize the CoAP packet and append the resource path */ 
+	err = coap_packet_init(&request, coap_buf, sizeof(coap_buf),
+			       APP_COAP_VERSION, COAP_TYPE_NON_CON,
+			       sizeof(next_token), (uint8_t *)&next_token,
+			       COAP_METHOD_PUT, coap_next_id());
+	if (err < 0) {
+		LOG_ERR("Failed to create CoAP request, %d", err);
+		return;
+	}
+
+	err = coap_packet_append_option(&request, COAP_OPTION_URI_PATH,
+					(uint8_t *)CONFIG_COAP_TX_RESOURCE,
+					strlen(CONFIG_COAP_TX_RESOURCE));
+	if (err < 0) {
+		LOG_ERR("Failed to encode CoAP option, %d", err);
+		return;
+	}
+
+	/* STEP 8.2 - Append the content format as plain text */
+	const uint8_t text_plain = COAP_CONTENT_FORMAT_TEXT_PLAIN;
+	err = coap_packet_append_option(&request, COAP_OPTION_CONTENT_FORMAT,
+					&text_plain,
+					sizeof(text_plain));
+	if (err < 0) {
+		LOG_ERR("Failed to encode CoAP option, %d", err);
+		return;
+	}
+
+	/* STEP 8.3 - Add the payload to the message */
+	err = coap_packet_append_payload_marker(&request);
+	if (err < 0) {
+		LOG_ERR("Failed to append payload marker, %d", err);
+		return;
+	}
+
+	char buffer[sizeof(MESSAGE_TO_SEND) + 8];
+    sprintf(buffer, "%s - %04X%c", MESSAGE_TO_SEND, next_token, '\0');
+	LOG_HEXDUMP_INF(buffer, sizeof(buffer), "Payload");
+	err = coap_packet_append_payload(&request, (uint8_t *)buffer, sizeof(buffer));
+	if (err < 0) {
+		LOG_ERR("Failed to append payload, %d", err);
+		return;
+	}
+
+
+#ifdef CONFIG_UDP_RAI_ENABLE
+	err = setsockopt(sock, SOL_SOCKET, SO_RAI_LAST , NULL, 0);
+	if (err < 0) {
+		LOG_ERR("Failed to set socket options, %d", errno);
+		return;	
+	}
+#endif
+
+	err =  send(sock, request.data, request.offset, 0);
+	if (err < 0)
+	{
+		LOG_ERR("Failed to transmit UDP packet, %d", err);
+		return;
+	}
+	//server_disconnect();
+}
+K_WORK_DEFINE(coap_put_work, coap_put_work_fn);
+
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+					uint32_t pins)
+{
+	int val;
+
+	LOG_INF("Button pressed at %" PRIu32, k_cycle_get_32());
+
+	val = gpio_pin_get_dt(&buttons[0]);
+	if (val == 1 && LTE_Connection_Current_State == LTE_STATE_ON) // button1 pressed
+	{
+		LOG_INF("Send UDP package!");
+		k_work_submit(&coap_put_work);
+	}
+
+}
+
+void button_init(void)
+{
+	int ret;
+	for (size_t i = 0; i < ARRAY_SIZE(buttons); i++)
+	{
+		ret = gpio_pin_configure_dt(&buttons[i], GPIO_INPUT);
+		if (ret != 0)
+		{
+			LOG_ERR("Error %d: failed to configure %s pin %d",
+				   ret, buttons[i].port->name, buttons[i].pin);
+			return;
+		}
+
+		ret = gpio_pin_interrupt_configure_dt(&buttons[i],
+											  GPIO_INT_EDGE_TO_ACTIVE);
+		if (ret != 0)
+		{
+			LOG_ERR("Error %d: failed to configure interrupt on %s pin %d",
+				   ret, buttons[i].port->name, buttons[i].pin);
+			return;
+		}
+
+		gpio_init_callback(&button_cb_data[i], button_pressed, BIT(buttons[i].pin));
+		gpio_add_callback(buttons[i].port, &button_cb_data[i]);
+		LOG_INF("Set up button at %s pin %d", buttons[i].port->name, buttons[i].pin);
+	}
+}
 static void modem_init(void)
 {
 	int err;
@@ -277,89 +354,8 @@ static void modem_connect(void)
 	}
 
 }
-#endif
-
-static void server_transmission_work_fn(struct k_work *work)
-{
-	int err;
-	struct coap_packet request;
-	if (sock < 0)
-	{
-		LOG_ERR("Socket not connected");
-		return;
-	}
-	
-	next_token++;
-
-	/* STEP 8.1 - Initialize the CoAP packet and append the resource path */ 
-	err = coap_packet_init(&request, coap_buf, sizeof(coap_buf),
-			       APP_COAP_VERSION, COAP_TYPE_NON_CON,
-			       sizeof(next_token), (uint8_t *)&next_token,
-			       COAP_METHOD_PUT, coap_next_id());
-	if (err < 0) {
-		LOG_ERR("Failed to create CoAP request, %d\n", err);
-		return;
-	}
-
-	err = coap_packet_append_option(&request, COAP_OPTION_URI_PATH,
-					(uint8_t *)CONFIG_COAP_TX_RESOURCE,
-					strlen(CONFIG_COAP_TX_RESOURCE));
-	if (err < 0) {
-		LOG_ERR("Failed to encode CoAP option, %d\n", err);
-		return;
-	}
-
-	/* STEP 8.2 - Append the content format as plain text */
-	const uint8_t text_plain = COAP_CONTENT_FORMAT_TEXT_PLAIN;
-	err = coap_packet_append_option(&request, COAP_OPTION_CONTENT_FORMAT,
-					&text_plain,
-					sizeof(text_plain));
-	if (err < 0) {
-		LOG_ERR("Failed to encode CoAP option, %d\n", err);
-		return;
-	}
-
-	/* STEP 8.3 - Add the payload to the message */
-	err = coap_packet_append_payload_marker(&request);
-	if (err < 0) {
-		LOG_ERR("Failed to append payload marker, %d\n", err);
-		return;
-	}
 
 
-    char buffer[sizeof(MESSAGE_TO_SEND) + 8];
-    sprintf(buffer, "%s - %04X%c", MESSAGE_TO_SEND, next_token, '\0');
-	LOG_HEXDUMP_INF(buffer, sizeof(buffer), "Payload");
-	err = coap_packet_append_payload(&request, (uint8_t *)buffer, sizeof(buffer));
-	if (err < 0) {
-		LOG_ERR("Failed to append payload, %d\n", err);
-		return;
-	}
-
-
-#ifdef CONFIG_UDP_RAI_ENABLE
-	err = setsockopt(sock, SOL_SOCKET, SO_RAI_LAST , NULL, 0);
-	if (err < 0) {
-		LOG_ERR("Failed to set socket options, %d", errno);
-		return;	
-	}
-#endif
-
-	err =  send(sock, request.data, request.offset, 0);
-	if (err < 0)
-	{
-		LOG_ERR("Failed to transmit UDP packet, %d", err);
-		return;
-	}
-	//server_disconnect();
-}
-
-static void work_init(void)
-{
-
-	k_work_init_delayable(&server_transmission_work,
-						  server_transmission_work_fn);
-}
 
 static int client_handle_response(uint8_t *buf, int received)
 {
@@ -372,7 +368,7 @@ static int client_handle_response(uint8_t *buf, int received)
 	/* STEP 9.1 - Parse the received CoAP packet */
 	int err = coap_packet_parse(&reply, buf, received, NULL, 0);
 	if (err < 0) {
-		LOG_ERR("Malformed response received: %d\n", err);
+		LOG_ERR("Malformed response received: %d", err);
 		return err;
 	}
 
@@ -380,7 +376,7 @@ static int client_handle_response(uint8_t *buf, int received)
 	token_len = coap_header_get_token(&reply, token);
 	if ((token_len != sizeof(next_token)) ||
 	    (memcmp(&next_token, token, sizeof(next_token)) != 0)) {
-		LOG_ERR("Invalid token received: 0x%02x%02x\n",
+		LOG_ERR("Invalid token received: 0x%02x%02x",
 		       token[1], token[0]);
 		return 0;
 	}
@@ -395,7 +391,7 @@ static int client_handle_response(uint8_t *buf, int received)
 	}
 
 	/* STEP 9.4 - Log the header code, token and payload of the response */
-	LOG_INF("CoAP response: Code 0x%x, Token 0x%02x%02x, Payload: %s\n",
+	LOG_INF("CoAP response: Code 0x%x, Token 0x%02x%02x, Payload: %s",
 	       coap_header_get_code(&reply), token[1], token[0], (char *)temp_buf);
 
 	return 0;
@@ -411,7 +407,6 @@ void main(void)
 
 	LTE_Connection_Current_State = LTE_STATE_BUSY;
 
-#if defined(CONFIG_NRF_MODEM_LIB)
 	/* Initialize the modem before calling configure_low_power(). This is
 	 * because the enabling of RAI is dependent on the
 	 * configured network mode which is set during modem initialization.
@@ -424,7 +419,7 @@ void main(void)
 			   err);
 	}
 	modem_connect();
-#endif
+
 	while (LTE_STATE_BUSY == LTE_Connection_Current_State)
 	{
 		LOG_WRN("lte_set_connection BUSY!");
@@ -441,27 +436,28 @@ void main(void)
 		return;
 	}
 
-	work_init();
+
 	while (1) {
 		received = recv(sock, coap_buf, sizeof(coap_buf), 0);
 
 		if (received < 0) {
-			LOG_ERR("Socket error: %d, exit\n", errno);
+			LOG_ERR("Socket error: %d, exit", errno);
 			break;
 		}
 		
 		if (received == 0) {
-			LOG_INF("Empty datagram\n");
+			LOG_INF("Empty datagram");
 			continue;
 		}
 
 		/* STEP 12 - Parse the received CoAP packet */
 		err = client_handle_response(coap_buf, received);
 		if (err < 0) {
-			LOG_ERR("Invalid response, exit\n");
+			LOG_ERR("Invalid response, exit");
 			break;
 		
-		server_disconnect();
 		}
-	}
+		
+		}
+	server_disconnect();
 }
