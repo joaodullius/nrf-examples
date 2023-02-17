@@ -13,6 +13,9 @@
 #include <zephyr/net/coap.h>
 #include <zephyr/random/rand32.h>
 #include <date_time.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/pm/device.h>
 
 #define UDP_IP_HEADER_SIZE 28
 
@@ -20,11 +23,14 @@ LOG_MODULE_REGISTER(gnss_udp, LOG_LEVEL_INF);
 
 
 #define BT1_NODE DT_ALIAS(sw0)
+#define BT2_NODE DT_ALIAS(sw1)
 
 static const struct gpio_dt_spec buttons[] = {
 	GPIO_DT_SPEC_GET_OR(BT1_NODE, gpios,
+						{0}),
+	GPIO_DT_SPEC_GET_OR(BT2_NODE, gpios,
 						{0})};
-static struct gpio_callback button_cb_data[4];
+static struct gpio_callback button_cb_data[2];
 
 #define MESSAGE_SIZE 256 
 #define MESSAGE_TO_SEND "Hello from GNSS UDP"
@@ -47,8 +53,8 @@ static uint8_t coap_buf[APP_COAP_MAX_MSG_LEN];
 #define CONFIG_COAP_SERVER_PORT 5683
 #define CONFIG_COAP_TX_RESOURCE "large-update"
 
-
-
+//UART Disable Definitions
+static bool uart_state = true;
 
 
 static K_SEM_DEFINE(time_sem, 0, 1);
@@ -309,6 +315,18 @@ static void coap_put_work_fn(struct k_work *work)
 }
 K_WORK_DEFINE(coap_put_work, coap_put_work_fn);
 
+static void uart0_set_enable(bool enable)
+{
+	const struct device *uart_dev = DEVICE_DT_GET(DT_NODELABEL(uart0));
+
+	if (!device_is_ready(uart_dev)) {
+		return;
+	}
+
+	pm_device_action_run(uart_dev, enable ? PM_DEVICE_ACTION_RESUME : PM_DEVICE_ACTION_SUSPEND);
+}
+
+
 void button_pressed(const struct device *dev, struct gpio_callback *cb,
 					uint32_t pins)
 {
@@ -321,6 +339,26 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
 	{
 		LOG_INF("Send UDP package!");
 		k_work_submit(&coap_put_work);
+	}
+
+	val = gpio_pin_get_dt(&buttons[1]);
+	if (val == 1) // button1 pressed
+	{
+		LOG_INF("Button 2 pressed.");
+		//Toogle uart_state
+		uart_state = !uart_state;
+		
+		if (uart_state)
+		{
+			uart0_set_enable(true);
+			LOG_INF("UART enabled");
+			
+		}
+		else
+		{
+			LOG_INF("UART disabled");
+			uart0_set_enable(false);
+		}
 	}
 
 }
