@@ -62,7 +62,7 @@ void main(void)
 
 
     gpio_dev = DEVICE_DT_GET(RX_DEVICE);
-   	gpio_pin_configure(gpio_dev, RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
+   	//gpio_pin_configure(gpio_dev, RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
 	gpio_pin_interrupt_configure(gpio_dev, RX_PIN, GPIO_INT_EDGE_TO_ACTIVE);
     gpio_init_callback(&rx_cb, rx_handler, BIT(RX_PIN));
 	gpio_add_callback(gpio_dev, &rx_cb);
