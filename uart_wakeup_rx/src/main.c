@@ -49,7 +49,7 @@ void main(void)
 
 	printk("Initializing...\n");
 	/*
-   	gpio_pin_configure_dt(&button0, GPIO_INPUT);
+	gpio_pin_configure_dt(&button0, GPIO_INPUT);
 	gpio_pin_interrupt_configure_dt(&button0, GPIO_INT_EDGE_TO_ACTIVE);
 	gpio_init_callback(&button0_cb, button0_handler, BIT(button0.pin));
 	gpio_add_callback(button0.port, &button0_cb);
@@ -61,21 +61,21 @@ void main(void)
 	gpio_add_callback(button1.port, &button1_cb);
 
 
-    gpio_dev = DEVICE_DT_GET(RX_DEVICE);
-   	//gpio_pin_configure(gpio_dev, RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
+	gpio_dev = DEVICE_DT_GET(RX_DEVICE);
+	//gpio_pin_configure(gpio_dev, RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
 	gpio_pin_interrupt_configure(gpio_dev, RX_PIN, GPIO_INT_EDGE_TO_ACTIVE);
-    gpio_init_callback(&rx_cb, rx_handler, BIT(RX_PIN));
+	gpio_init_callback(&rx_cb, rx_handler, BIT(RX_PIN));
 	gpio_add_callback(gpio_dev, &rx_cb);
 
 	uart0_set_enable(true);
 
 	if (!device_is_ready(led.port)) {
-        return;
-    }
+		return;
+	}
 
-    if (gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE) < 0) {
-        return;
-    }
+	if (gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE) < 0) {
+		return;
+	}
 
 	while (1) {
 		printk("Printing...\n");
