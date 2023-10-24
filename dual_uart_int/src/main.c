@@ -7,6 +7,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
+#include <hal/nrf_uarte.h>
 
 #include <string.h>
 
@@ -127,6 +128,22 @@ void print_uart1_fn(void){
 	}
 }
 
+struct uarte_nrfx_config {
+	NRF_UARTE_Type *uarte_regs; /* Instance address */
+	uint32_t flags;
+	bool disable_rx;
+	const struct pinctrl_dev_config *pcfg;
+#ifdef UARTE_ANY_ASYNC
+	nrfx_timer_t timer;
+#endif
+};
+
+static inline NRF_UARTE_Type *get_uarte_instance(const struct device *dev)
+{
+	const struct uarte_nrfx_config *config = dev->config;
+
+	return config->uarte_regs;
+}
 
 
 void main(void)
@@ -142,7 +159,13 @@ void main(void)
 		return;
 	}	
 
+	NRF_UARTE_Type *uarte1 = get_uarte_instance(uart1_dev);
+	printk("Uart1 Baudrate config: %x\n", uarte1->BAUDRATE);
 
+	//config uart1 baudrate to 100kbps
+	uarte1->BAUDRATE = 0x01999D1C;  //100kbps
+	printk("Uart1 Baudrate new: %x\n", uarte1->BAUDRATE);
+		
 	/* configure interrupt and callback to receive data */
 	uart_irq_callback_user_data_set(uart0_dev, uart0_cb, NULL);
 	uart_irq_rx_enable(uart0_dev);
