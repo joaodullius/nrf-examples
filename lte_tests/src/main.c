@@ -18,32 +18,11 @@
 #include <dk_buttons_and_leds.h>
 #include <nrf_modem_gnss.h>
 
-#include <stdlib.h>
-#include <math.h>
-#include <zephyr/logging/log.h>
-#include <nrf_modem_at.h>
-#include <date_time.h>
-
 #if NCS_VERSION_NUMBER < 0x20600
 #include <zephyr/random/rand32.h>
 #else 
 #include <zephyr/random/random.h>
 #endif
-
-static struct k_work_q gnss_work_q;
-
-#define GNSS_WORKQ_THREAD_STACK_SIZE 2304
-#define GNSS_WORKQ_THREAD_PRIORITY   5
-
-K_THREAD_STACK_DEFINE(gnss_workq_stack_area, GNSS_WORKQ_THREAD_STACK_SIZE);
-
-#include "assistance.h"
-
-static struct nrf_modem_gnss_agnss_data_frame last_agnss;
-static struct k_work agnss_data_get_work;
-static volatile bool requesting_assistance;
-
-static K_SEM_DEFINE(time_sem, 0, 1);
 
 #define SEC_TAG 12
 #define APP_COAP_SEND_INTERVAL_MS 60000
@@ -54,7 +33,7 @@ static struct sockaddr_storage server;
 static uint16_t next_token;
 K_SEM_DEFINE(lte_connected, 0, 1);
 K_SEM_DEFINE(gnss_fix_sem, 0, 1);
-LOG_MODULE_REGISTER(Cellfund_Project, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(Cellfund_Project, LOG_LEVEL_INF);
 static uint8_t coap_buf[APP_COAP_MAX_MSG_LEN];
 static uint8_t coap_sendbug[64];
 static struct nrf_modem_gnss_pvt_data_frame current_pvt;
@@ -71,60 +50,6 @@ static void print_fix_data(struct nrf_modem_gnss_pvt_data_frame *pvt_data)
 	       pvt_data->datetime.minute,
 	       pvt_data->datetime.seconds,
 	       pvt_data->datetime.ms);
-}
-
-static const char *get_system_string(uint8_t system_id)
-{
-	switch (system_id) {
-	case NRF_MODEM_GNSS_SYSTEM_INVALID:
-		return "invalid";
-
-	case NRF_MODEM_GNSS_SYSTEM_GPS:
-		return "GPS";
-
-	case NRF_MODEM_GNSS_SYSTEM_QZSS:
-		return "QZSS";
-
-	default:
-		return "unknown";
-	}
-}
-
-static void agnss_data_get_work_fn(struct k_work *item)
-{
-	ARG_UNUSED(item);
-
-	int err;
-
-	/* GPS data need is always expected to be present and first in list. */
-	__ASSERT(last_agnss.system_count > 0,
-		 "GNSS system data need not found");
-	__ASSERT(last_agnss.system[0].system_id == NRF_MODEM_GNSS_SYSTEM_GPS,
-		 "GPS data need not found");
-
-	if (last_agnss.data_flags == 0 &&
-	    last_agnss.system[0].sv_mask_ephe == 0 &&
-	    last_agnss.system[0].sv_mask_alm == 0) {
-		LOG_INF("Ignoring assistance request because only QZSS data is requested");
-		return;
-	}
-
-	requesting_assistance = true;
-
-	printk("Assistance data needed: data_flags: 0x%02x\n", last_agnss.data_flags);
-	for (int i = 0; i < last_agnss.system_count; i++) {
-		printk("Assistance data needed: %s ephe: 0x%llx, alm: 0x%llx\n",
-			get_system_string(last_agnss.system[i].system_id),
-			last_agnss.system[i].sv_mask_ephe,
-			last_agnss.system[i].sv_mask_alm);
-	}
-
-	err = assistance_request(&last_agnss);
-	if (err) {
-		printk("Failed to request assistance data\n");
-	}
-
-	requesting_assistance = false;
 }
 
 static void gnss_event_handler(int event)
@@ -158,41 +83,10 @@ static void gnss_event_handler(int event)
 		LOG_INF("GNSS enters sleep because fix retry timeout was reached\n\r");
 		break;
 
-	case NRF_MODEM_GNSS_EVT_AGNSS_REQ:
-		printk("A-GNSS Required!\n");
-		retval = nrf_modem_gnss_read(&last_agnss,
-					     sizeof(last_agnss),
-					     NRF_MODEM_GNSS_DATA_AGNSS_REQ);
-		if (retval == 0) {
-			k_work_submit_to_queue(&gnss_work_q, &agnss_data_get_work);
-		}
-		break;
-
 	default:
 
 		break;
 	}
-}
-
-static int sample_init(void)
-{
-	int err = 0;
-
-	struct k_work_queue_config cfg = {
-		.name = "gnss_work_q",
-		.no_yield = false
-	};
-
-	k_work_queue_start(
-		&gnss_work_q,
-		gnss_workq_stack_area,
-		K_THREAD_STACK_SIZEOF(gnss_workq_stack_area),
-		GNSS_WORKQ_THREAD_PRIORITY,
-		&cfg);
-
-	k_work_init(&agnss_data_get_work, agnss_data_get_work_fn);
-	err = assistance_init(&gnss_work_q);
-	return err;
 }
 
 static int gnss_init_and_start(void)
@@ -416,20 +310,12 @@ static void lte_handler(const struct lte_lc_evt *const evt)
 	}
 }
 
-static void date_time_evt_handler(const struct date_time_evt *evt)
-{
-	k_sem_give(&time_sem);
-}
 
 static int modem_configure(void)
 {
 	int err;
 
 	LOG_INF("Initializing modem library");
-
-	if (IS_ENABLED(CONFIG_DATE_TIME)) {
-		date_time_register_handler(date_time_evt_handler);
-	}
 
 	err = nrf_modem_lib_init();
 	if (err) {
@@ -449,14 +335,6 @@ static int modem_configure(void)
 		return err;
 	}
 
-	
-	err = lte_lc_psm_req(true);
-	if (err)
-		{
-			LOG_ERR("lte_lc_psm_req, error: %d", err);
-		}
-
-
 	/* lte_lc_init deprecated in >= v2.6.0 */
 	#if NCS_VERSION_NUMBER < 0x20600
 	err = lte_lc_init();
@@ -473,24 +351,13 @@ static int modem_configure(void)
 		return err;
 	}
 
-	if (IS_ENABLED(CONFIG_DATE_TIME)) {
-		LOG_INF("Waiting for current time");
-
-		/* Wait for an event from the Date Time library. */
-		k_sem_take(&time_sem, K_MINUTES(10));
-
-		if (!date_time_is_valid()) {
-			LOG_WRN("Failed to get current time, continuing anyway");
-		}
-	}
-
 
 	/* Decativate LTE and enable GNSS. */
-/* 	err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_DEACTIVATE_LTE);
+	err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_DEACTIVATE_LTE);
 	if (err) {
 		LOG_ERR("Failed to decativate LTE and enable GNSS functional mode");
 		return err;
-	} */
+	}
 
 	return 0;
 }
@@ -598,22 +465,10 @@ int main(void)
 		return 0;
 	}
 
-/* 	err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_NORMAL);
-	if (err != 0){
-		LOG_ERR("Failed to activate LTE");
-		return 0;
-	}  */
-	k_sem_take(&lte_connected, K_FOREVER);
-
 	err = dk_buttons_init(button_handler);
 	if (err) {
 		LOG_ERR("Failed to initlize button handler: %d\n", err);
 		return 0;
-	}
-
-	if (sample_init() != 0) {
-		LOG_ERR("Failed to initialize sample");
-		return -1;
 	}
 
 	LOG_INF("Starting GNSS....");
@@ -621,12 +476,12 @@ int main(void)
 
 	while (1) {
 		k_sem_take(&gnss_fix_sem, K_FOREVER);
-/* 		err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_NORMAL);
+		err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_NORMAL);
 		if (err != 0){
 			LOG_ERR("Failed to activate LTE");
 			break;
-		} */
-		//k_sem_take(&lte_connected, K_FOREVER);
+		}
+		k_sem_take(&lte_connected, K_FOREVER);
 		if (resolve_address_lock == 0){
 			LOG_INF("Resolving the server address\n\r");
 			if (server_resolve() != 0) {
@@ -664,11 +519,11 @@ int main(void)
 
 		(void)close(sock);
 
-/* 		err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_DEACTIVATE_LTE);
+		err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_DEACTIVATE_LTE);
 		if (err != 0){
 			LOG_ERR("Failed to decativate LTE and enable GNSS functional mode");
 			break;
-		} */
+		}
 	}
 
 	device_status = status_nolte;
