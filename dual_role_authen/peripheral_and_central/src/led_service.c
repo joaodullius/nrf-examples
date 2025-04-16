@@ -4,6 +4,9 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/gpio.h>
 
+#ifdef CONFIG_BT_CENTRAL
+#include "central_role.h"
+#endif
 
 LOG_MODULE_REGISTER(led_service, LOG_LEVEL_INF);
 
@@ -18,6 +21,10 @@ static ssize_t on_led_state_write(struct bt_conn *conn, const struct bt_gatt_att
     led_value = *(uint8_t *)buf; // Atualiza o valor do LED com o valor recebido
     LOG_INF("Led State: %d", led_value);
     gpio_pin_set_dt(&led0, led_value);
+	
+#ifdef CONFIG_BT_CENTRAL
+    central_role_write_led(led_value);  
+#endif  
     return len;
 }
 
@@ -26,7 +33,7 @@ BT_GATT_SERVICE_DEFINE(led_service_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_128(LED_SERVICE_UUID)),
     BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(LED_STATE_CHAR_UUID),
                            BT_GATT_CHRC_WRITE,
-                           BT_GATT_PERM_WRITE_ENCRYPT,
+                           BT_GATT_PERM_WRITE_AUTHEN,
                            NULL, on_led_state_write, NULL)
 );
 #else

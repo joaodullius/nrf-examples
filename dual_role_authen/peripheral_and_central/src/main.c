@@ -42,10 +42,7 @@ int main(void)
 #ifdef CONFIG_BT_SMP
 	settings_load();
 #endif // CONFIG_BT_SMP
-
 	periph_bt_ready(err);
-
 	central_role_init();
-	
 	return 0;
 }
