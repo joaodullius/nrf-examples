@@ -26,6 +26,8 @@ Examples
 
 * **timer_gppi_gpiote** - This example implements a hardware timer that is connected by either PPI or DPPI to a GPIOTE to blink an LED. It demonstrates how to configure the timer and how to use the Programmable Peripheral Interconnect (PPI) or Direct Peripheral-to-Peripheral Interconnect (DPPI) interfaces to trigger a GPIOTE event.
 
+* **uart_wakeup_rx** - This example demonstrates how to wake up the nRF9160 from sleep using UART activity on RX. It uses low-power states and enables UART only when needed to reduce current consumption. Useful for applications waiting for external commands or serial triggers without wasting energy in idle mode.
+
 =================================
 Other Examples
 =================================
