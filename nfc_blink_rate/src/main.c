@@ -193,8 +193,30 @@ static void nfc_callback(void *context, nfc_t4t_event_t event,
 }
 
 static void do_system_off(struct k_work *work) { sys_poweroff(); }
-static void led_blink_handler(struct k_work *work) {}
-static void confirm_blink_handler(struct k_work *work) {}
+
+static void led_blink_handler(struct k_work *work)
+{
+	static bool led_on;
+
+	led_on = !led_on;
+	dk_set_led(LED_BLINK, led_on);
+	k_work_reschedule(&led_blink_work, K_MSEC(blink_rate_ms));
+}
+
+static int confirm_step;
+
+static void confirm_blink_handler(struct k_work *work)
+{
+	confirm_step++;
+	dk_set_led(LED_NFC_CONFIRM, confirm_step % 2);
+	if (confirm_step < NFC_CONFIRM_STEPS) {
+		k_work_reschedule(&confirm_work, K_MSEC(NFC_CONFIRM_MS));
+	} else {
+		dk_set_led_off(LED_NFC_CONFIRM);
+		confirm_step = 0;
+	}
+}
+
 static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
 	ARG_UNUSED(button_state);
@@ -255,6 +277,20 @@ int main(void)
 	}
 
 	printk("NFC started. Tag content: LED %u\n", blink_rate_ms);
+
+	if (nfc_mode) {
+		printk("NFC mode: waiting for phone\n");
+		k_work_reschedule(&system_off_work,
+				  K_SECONDS(SYSTEM_OFF_DELAY_S));
+	} else {
+		printk("Active mode: LED blink at %u ms\n", blink_rate_ms);
+		err = dk_buttons_init(button_handler);
+		if (err) {
+			printk("Cannot init buttons (err %d)\n", err);
+			return err;
+		}
+		k_work_reschedule(&led_blink_work, K_NO_WAIT);
+	}
 
 	return 0;
 }
