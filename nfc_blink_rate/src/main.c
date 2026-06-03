@@ -4,6 +4,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/poweroff.h>
 
+#include <nrfx.h>
 #include <hal/nrf_reset.h>
 #include <hal/nrf_gpio.h>
 
@@ -192,7 +193,21 @@ static void nfc_callback(void *context, nfc_t4t_event_t event,
 	}
 }
 
-static void do_system_off(struct k_work *work) { sys_poweroff(); }
+static void do_system_off(struct k_work *work)
+{
+	printk("Entering system off\n");
+	k_work_cancel_delayable(&led_blink_work);
+	k_work_cancel_delayable(&confirm_work);
+	dk_set_leds(DK_NO_LEDS_MSK);
+
+	/* Configure BTN1 (sw0) for GPIO wakeup from system off */
+	nrf_gpio_cfg_input(NRF_DT_GPIOS_TO_PSEL(DT_ALIAS(sw0), gpios),
+			   NRF_GPIO_PIN_PULLUP);
+	nrf_gpio_cfg_sense_set(NRF_DT_GPIOS_TO_PSEL(DT_ALIAS(sw0), gpios),
+			       NRF_GPIO_PIN_SENSE_LOW);
+
+	sys_poweroff();
+}
 
 static void led_blink_handler(struct k_work *work)
 {
@@ -219,8 +234,10 @@ static void confirm_blink_handler(struct k_work *work)
 
 static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
-	ARG_UNUSED(button_state);
-	ARG_UNUSED(has_changed);
+	if ((has_changed & DK_BTN1_MSK) && (button_state & DK_BTN1_MSK)) {
+		printk("BTN1 pressed: entering system off\n");
+		k_work_reschedule(&system_off_work, K_NO_WAIT);
+	}
 }
 
 int main(void)
