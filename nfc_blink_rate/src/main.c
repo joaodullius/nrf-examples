@@ -152,8 +152,44 @@ static void nfc_callback(void *context, nfc_t4t_event_t event,
 	ARG_UNUSED(context);
 	ARG_UNUSED(data);
 	ARG_UNUSED(flags);
-	ARG_UNUSED(data_length);
-	ARG_UNUSED(event);
+
+	switch (event) {
+	case NFC_T4T_EVENT_FIELD_ON:
+		if (nfc_mode) {
+			k_work_cancel_delayable(&system_off_work);
+			dk_set_led_on(LED_NFC_FIELD);
+			printk("NFC field on\n");
+		}
+		break;
+
+	case NFC_T4T_EVENT_FIELD_OFF:
+		if (nfc_mode) {
+			dk_set_led_off(LED_NFC_FIELD);
+			k_work_reschedule(&system_off_work,
+					  K_SECONDS(SYSTEM_OFF_DELAY_S));
+			printk("NFC field off, sleeping in %ds\n",
+			       SYSTEM_OFF_DELAY_S);
+		}
+		break;
+
+	case NFC_T4T_EVENT_NDEF_UPDATED:
+		if (nfc_mode && data_length > 0) {
+			uint32_t rate = parse_blink_rate();
+
+			if (rate > 0) {
+				printk("NFC update: LED %u ms\n", rate);
+				atomic_set(&pending_rate, rate);
+				k_work_submit(&save_work);
+			} else {
+				printk("NFC update: invalid format"
+				       " (expected 'LED <ms>')\n");
+			}
+		}
+		break;
+
+	default:
+		break;
+	}
 }
 
 static void do_system_off(struct k_work *work) { sys_poweroff(); }
