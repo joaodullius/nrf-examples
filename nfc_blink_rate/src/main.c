@@ -7,6 +7,7 @@
 #include <nrfx.h>
 #include <hal/nrf_reset.h>
 #include <hal/nrf_gpio.h>
+#include <nrfx_nfct.h>
 
 #include <nfc_t4t_lib.h>
 #include <nfc/ndef/msg.h>
@@ -37,6 +38,10 @@
 static uint8_t ndef_msg_buf[NDEF_FILE_SIZE];
 static uint32_t blink_rate_ms = BLINK_RATE_DEFAULT_MS;
 static bool nfc_mode;
+
+/* Forward declarations */
+static int build_ndef_text(uint32_t rate);
+static int confirm_step;
 
 static struct k_work_delayable system_off_work;
 static struct k_work_delayable led_blink_work;
@@ -95,7 +100,12 @@ static void do_save_rate(struct k_work *work)
 	}
 	atomic_set(&pending_rate, 0);
 	blink_rate_ms = rate;
-	zms_write(&fs, ZMS_BLINK_RATE_ID, &rate, sizeof(rate));
+	build_ndef_text(rate);
+	ssize_t wrc = zms_write(&fs, ZMS_BLINK_RATE_ID, &rate, sizeof(rate));
+
+	if (wrc < 0) {
+		printk("ZMS write failed (err %d)\n", (int)wrc);
+	}
 	printk("Saved blink rate: %u ms\n", rate);
 	k_work_reschedule(&confirm_work, K_NO_WAIT);
 }
@@ -136,8 +146,13 @@ static uint32_t parse_blink_rate(void)
 
 	for (size_t i = 0; i + prefix_len < sizeof(ndef_msg_buf); i++) {
 		if (memcmp(&ndef_msg_buf[i], prefix, prefix_len) == 0) {
-			long val = strtol((const char *)&ndef_msg_buf[i + prefix_len],
-					  NULL, 10);
+			char num_buf[12] = {0};
+			size_t remain = sizeof(ndef_msg_buf) - (i + prefix_len);
+
+			memcpy(num_buf, &ndef_msg_buf[i + prefix_len],
+			       MIN(remain, sizeof(num_buf) - 1));
+			long val = strtol(num_buf, NULL, 10);
+
 			if (val >= BLINK_RATE_MIN_MS && val <= BLINK_RATE_MAX_MS) {
 				return (uint32_t)val;
 			}
@@ -195,9 +210,21 @@ static void nfc_callback(void *context, nfc_t4t_event_t event,
 
 static void do_system_off(struct k_work *work)
 {
+	/* Flush any pending rate save before powering off */
+	uint32_t rate = (uint32_t)atomic_get(&pending_rate);
+
+	if (rate != 0) {
+		atomic_set(&pending_rate, 0);
+		blink_rate_ms = rate;
+		build_ndef_text(rate);
+		zms_write(&fs, ZMS_BLINK_RATE_ID, &rate, sizeof(rate));
+		printk("Flushed pending rate: %u ms\n", rate);
+	}
+
 	printk("Entering system off\n");
 	k_work_cancel_delayable(&led_blink_work);
 	k_work_cancel_delayable(&confirm_work);
+	confirm_step = 0;
 	dk_set_leds(DK_NO_LEDS_MSK);
 
 	/* Configure BTN1 (sw0) for GPIO wakeup from system off */
@@ -205,6 +232,17 @@ static void do_system_off(struct k_work *work)
 			   NRF_GPIO_PIN_PULLUP);
 	nrf_gpio_cfg_sense_set(NRF_DT_GPIOS_TO_PSEL(DT_ALIAS(sw0), gpios),
 			       NRF_GPIO_PIN_SENSE_LOW);
+
+	/*
+	 * Put NFCT into SENSE mode so the NFC field can wake the SoC from
+	 * system off.  The NFC platform layer (platform.c) does NOT hook
+	 * sys_poweroff(), so we must call nfc_t4t_emulation_stop() and then
+	 * force SENSING state explicitly before handing off to sys_poweroff().
+	 * nrfx_nfct_sense() does not exist in NCS v3.3.0; the equivalent is
+	 * nrfx_nfct_state_force(NRFX_NFCT_STATE_SENSING).
+	 */
+	nfc_t4t_emulation_stop();
+	nrfx_nfct_state_force(NRFX_NFCT_STATE_SENSING);
 
 	sys_poweroff();
 }
@@ -217,8 +255,6 @@ static void led_blink_handler(struct k_work *work)
 	dk_set_led(LED_BLINK, led_on);
 	k_work_reschedule(&led_blink_work, K_MSEC(blink_rate_ms));
 }
-
-static int confirm_step;
 
 static void confirm_blink_handler(struct k_work *work)
 {
