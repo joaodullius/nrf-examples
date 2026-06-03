@@ -99,9 +99,80 @@ static void do_save_rate(struct k_work *work)
 	k_work_reschedule(&confirm_work, K_NO_WAIT);
 }
 
+static int build_ndef_text(uint32_t rate)
+{
+	static const uint8_t en_code[] = {'e', 'n'};
+	static char text[32];
+	int text_len = snprintf(text, sizeof(text), "LED %u", rate);
+
+	NFC_NDEF_TEXT_RECORD_DESC_DEF(text_rec, UTF_8,
+				      en_code, sizeof(en_code),
+				      (const uint8_t *)text, text_len);
+	NFC_NDEF_MSG_DEF(nfc_text_msg, 1);
+
+	int err = nfc_ndef_msg_record_add(&NFC_NDEF_MSG(nfc_text_msg),
+					  &NFC_NDEF_TEXT_RECORD_DESC(text_rec));
+	if (err) {
+		return err;
+	}
+
+	uint32_t ndef_size = nfc_t4t_ndef_file_msg_size_get(sizeof(ndef_msg_buf));
+
+	err = nfc_ndef_msg_encode(&NFC_NDEF_MSG(nfc_text_msg),
+				  nfc_t4t_ndef_file_msg_get(ndef_msg_buf),
+				  &ndef_size);
+	if (err) {
+		return err;
+	}
+
+	return nfc_t4t_ndef_file_encode(ndef_msg_buf, &ndef_size);
+}
+
+static uint32_t parse_blink_rate(void)
+{
+	const char prefix[] = "LED ";
+	size_t prefix_len = strlen(prefix);
+
+	for (size_t i = 0; i + prefix_len < sizeof(ndef_msg_buf); i++) {
+		if (memcmp(&ndef_msg_buf[i], prefix, prefix_len) == 0) {
+			long val = strtol((const char *)&ndef_msg_buf[i + prefix_len],
+					  NULL, 10);
+			if (val >= BLINK_RATE_MIN_MS && val <= BLINK_RATE_MAX_MS) {
+				return (uint32_t)val;
+			}
+		}
+	}
+	return 0;
+}
+
+static void nfc_callback(void *context, nfc_t4t_event_t event,
+			 const uint8_t *data, size_t data_length,
+			 uint32_t flags)
+{
+	ARG_UNUSED(context);
+	ARG_UNUSED(data);
+	ARG_UNUSED(flags);
+	ARG_UNUSED(data_length);
+	ARG_UNUSED(event);
+}
+
+static void do_system_off(struct k_work *work) { sys_poweroff(); }
+static void led_blink_handler(struct k_work *work) {}
+static void confirm_blink_handler(struct k_work *work) {}
+static void button_handler(uint32_t button_state, uint32_t has_changed)
+{
+	ARG_UNUSED(button_state);
+	ARG_UNUSED(has_changed);
+}
+
 int main(void)
 {
 	int err;
+
+	k_work_init_delayable(&system_off_work, do_system_off);
+	k_work_init_delayable(&led_blink_work, led_blink_handler);
+	k_work_init_delayable(&confirm_work, confirm_blink_handler);
+	k_work_init(&save_work, do_save_rate);
 
 	err = dk_leds_init();
 	if (err) {
@@ -116,6 +187,38 @@ int main(void)
 	}
 	blink_rate_ms = load_blink_rate();
 	printk("Blink rate loaded: %u ms\n", blink_rate_ms);
+
+	uint32_t reas = nrf_reset_resetreas_get(NRF_RESET);
+	nrf_reset_resetreas_clear(NRF_RESET, reas);
+	nfc_mode = (reas & NRF_RESET_RESETREAS_NFC_MASK) != 0;
+	printk("Wake reason: 0x%08X -> %s mode\n",
+	       reas, nfc_mode ? "NFC" : "Active");
+
+	err = build_ndef_text(blink_rate_ms);
+	if (err) {
+		printk("Cannot build NDEF (err %d)\n", err);
+		return err;
+	}
+
+	err = nfc_t4t_setup(nfc_callback, NULL);
+	if (err < 0) {
+		printk("Cannot setup NFC T4T (err %d)\n", err);
+		return err;
+	}
+
+	err = nfc_t4t_ndef_rwpayload_set(ndef_msg_buf, sizeof(ndef_msg_buf));
+	if (err < 0) {
+		printk("Cannot set NFC payload (err %d)\n", err);
+		return err;
+	}
+
+	err = nfc_t4t_emulation_start();
+	if (err < 0) {
+		printk("Cannot start NFC emulation (err %d)\n", err);
+		return err;
+	}
+
+	printk("NFC started. Tag content: LED %u\n", blink_rate_ms);
 
 	return 0;
 }
