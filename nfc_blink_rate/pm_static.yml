@@ -1,0 +1,9 @@
+app:
+  address: 0x0
+  region: flash_primary
+  size: 0x15c000
+
+zms_storage:
+  address: 0x15c000
+  region: flash_primary
+  size: 0x9000
